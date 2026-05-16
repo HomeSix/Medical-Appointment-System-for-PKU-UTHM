@@ -1,0 +1,120 @@
+@define-color primary-blue #0066CC;
+@define-color secondary-blue #0052A3;
+@define-color light-blue #E6F2FF;
+@define-color accent-teal #00A3A3;
+@define-color success-green #28A745;
+@define-color warning-amber #FFC107;
+@define-color danger-red #DC3545;
+@define-color info-cyan #17A2B8;
+@define-color pure-white #FFFFFF;
+@define-color soft-gray #F8F9FA;
+@define-color medium-gray #6C757D;
+@define-color dark-gray #343A40;
+@define-color warm-cream #FFF8E7;
+@define-color emergency-orange #FF6B35;
+@define-color medical-green #20C997;
+
+* { font-family: "Segoe UI", "Ubuntu", "Cantarell", sans-serif; font-size: 14px; }
+window { background-color: @soft-gray; }
+
+headerbar {
+    background: linear-gradient(135deg, @primary-blue, @secondary-blue);
+    color: @pure-white; border: none;
+    box-shadow: 0 2px 8px alpha(@dark-gray, 0.3);
+    padding: 8px 16px; min-height: 48px;
+}
+headerbar label { color: @pure-white; font-weight: bold; font-size: 15px; }
+
+.sidebar {
+    background-color: @pure-white;
+    border-right: 2px solid @light-blue;
+    padding: 8px;
+}
+.sidebar button {
+    background: transparent; color: @dark-gray; border: none;
+    border-radius: 8px; padding: 12px 16px; margin: 2px 4px;
+    font-weight: 500;
+}
+.sidebar button:hover { background-color: @light-blue; color: @primary-blue; }
+.sidebar button.active {
+    background-color: @primary-blue; color: @pure-white;
+    box-shadow: 0 2px 6px alpha(@primary-blue, 0.4);
+}
+
+.content-area { background-color: @soft-gray; padding: 20px; }
+
+.card {
+    background-color: @pure-white; border-radius: 10px;
+    border: 1px solid alpha(@medium-gray, 0.15);
+    padding: 16px; margin: 8px;
+    box-shadow: 0 1px 8px alpha(@dark-gray, 0.06);
+}
+.card-title {
+    color: @secondary-blue; font-size: 17px; font-weight: bold;
+}
+
+button { border-radius: 8px; padding: 8px 18px; font-weight: 600; }
+button.primary {
+    background: linear-gradient(135deg, @primary-blue, @accent-teal);
+    color: @pure-white; border: none;
+    box-shadow: 0 2px 8px alpha(@primary-blue, 0.3);
+}
+button.primary:hover {
+    background: linear-gradient(135deg, @secondary-blue, @primary-blue);
+}
+button.success { background-color: @success-green; color: @pure-white; border: none; }
+button.success:hover { background-color: shade(@success-green, 1.1); }
+button.danger { background-color: @danger-red; color: @pure-white; border: none; }
+button.danger:hover { background-color: shade(@danger-red, 1.1); }
+button.warning { background-color: @warning-amber; color: @dark-gray; border: none; }
+button.ghost { background-color: transparent; color: @primary-blue; border: 2px solid @primary-blue; }
+button.ghost:hover { background-color: @light-blue; }
+
+entry {
+    background: @pure-white; border: 2px solid alpha(@medium-gray, 0.25);
+    border-radius: 8px; padding: 8px 12px; color: @dark-gray;
+}
+entry:focus { border-color: @primary-blue; box-shadow: 0 0 0 3px alpha(@primary-blue, 0.12); }
+
+combobox { border: 2px solid alpha(@medium-gray, 0.25); border-radius: 8px; }
+
+treeview { background: @pure-white; border: 1px solid alpha(@medium-gray, 0.15); }
+treeview header button {
+    background: linear-gradient(135deg, @primary-blue, @secondary-blue);
+    color: @pure-white; border: none; padding: 8px 12px; font-weight: bold;
+}
+treeview row:nth-child(even) { background: alpha(@light-blue, 0.3); }
+treeview row:selected { background-color: @primary-blue; color: @pure-white; }
+
+notebook tab {
+    background: @soft-gray; color: @medium-gray;
+    padding: 10px 20px; margin: 0 2px; font-weight: 500;
+}
+notebook tab:checked {
+    background: @pure-white; color: @primary-blue;
+    border-top: 3px solid @primary-blue;
+}
+
+calendar { background: @pure-white; border: 1px solid @light-blue; border-radius: 8px; }
+calendar:selected { background: @primary-blue; color: @pure-white; }
+
+.badge-success { background: alpha(@success-green, 0.12); color: @success-green; border-radius: 20px; padding: 2px 12px; font-weight: bold; font-size: 12px; }
+.badge-warning { background: alpha(@warning-amber, 0.12); color: shade(@warning-amber, 0.6); border-radius: 20px; padding: 2px 12px; font-weight: bold; font-size: 12px; }
+.badge-danger { background: alpha(@danger-red, 0.12); color: @danger-red; border-radius: 20px; padding: 2px 12px; font-weight: bold; font-size: 12px; }
+.badge-info { background: alpha(@info-cyan, 0.12); color: @info-cyan; border-radius: 20px; padding: 2px 12px; font-weight: bold; font-size: 12px; }
+
+.stat-card {
+    background: @pure-white; border-radius: 10px; padding: 20px;
+    border-left: 4px solid @primary-blue;
+    box-shadow: 0 1px 6px alpha(@dark-gray, 0.06);
+}
+.stat-card.blue { border-left-color: @primary-blue; }
+.stat-card.green { border-left-color: @success-green; }
+.stat-card.amber { border-left-color: @warning-amber; }
+.stat-card.red { border-left-color: @danger-red; }
+.stat-card.teal { border-left-color: @accent-teal; }
+.stat-number { font-size: 28px; font-weight: bold; color: @dark-gray; }
+.stat-label { font-size: 12px; color: @medium-gray; letter-spacing: 1px; }
+
+messagedialog { background: @pure-white; }
+dialog { background: @pure-white; border-radius: 12px; }

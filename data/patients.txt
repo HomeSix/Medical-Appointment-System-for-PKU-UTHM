@@ -1,0 +1,7 @@
+PKU250007|Afif|040710-05-0333|011-20756960|walkin@uthm.edu.my|FSKTM|Walk-in|Unknown|0|O+|None|N/A
+PKU250006|Mavinesh Nambiar Kannan|040720-10-0533|011-20756960|mavinesh045@gmail.com|FSKTM|BIK|Male|20|O-|Peanuts|012-3577460
+PKU250001|Ahmad bin Abdullah|990101-01-1234|012-3456789|ahmad@student.uthm.edu.my|FSKTM|BIT|Male|25|O+|None|017-9876543
+PKU250002|Siti Nurhaliza binti Ibrahim|010202-02-5678|013-4567890|siti@student.uthm.edu.my|FPTP|BCE|Female|22|A+|Penicillin|018-8765432
+PKU250003|Mohd Firdaus bin Razak|980303-03-9012|014-5678901|firdaus@student.uthm.edu.my|FKMP|BMM|Male|26|B+|Dust|019-7654321
+PKU250004|Nur Aisyah binti Abdullah|020404-04-3456|011-6789012|aisyah@student.uthm.edu.my|FKAAB|BQS|Female|21|AB+|None|017-6543210
+PKU250005|Lim Wei Ming|970505-05-7890|016-7890123|weiming@student.uthm.edu.my|FPTV|BTV|Male|27|O-|Seafood|018-5432109
