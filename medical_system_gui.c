@@ -34,9 +34,10 @@ void setup_css(void) {
         const gchar *fallback =
             "window{background:#f8f9fa}"
             "headerbar{background:#0066CC;color:white}"
-            "button{border-radius:8px;padding:8px 18px}"
+            "button{border-radius:8px;padding:8px 18px;color:#343A40;background:#fff;border:2px solid #dee2e6}"
             "entry{border-radius:8px;border:2px solid #dee2e6;padding:8px}"
             "entry:focus{border-color:#0066CC}"
+            "treeview row:selected{background:#0066CC;color:white}"
             "treeview header button{background:#0066CC;color:white;font-weight:bold}";
         gtk_css_provider_load_from_data(prov, fallback, -1, NULL);
     }
@@ -99,6 +100,54 @@ void show_notification(const char *message, const char *type) {
     gtk_window_set_title(GTK_WINDOW(d), type);
     gtk_dialog_run(GTK_DIALOG(d));
     gtk_widget_destroy(d);
+}
+
+static void toast_destroyed(gpointer data, GObject *obj) {
+    guint *tag = data;
+    if (*tag) g_source_remove(*tag);
+    *tag = 0;
+    g_object_weak_unref(obj, toast_destroyed, data);
+    g_free(data);
+}
+
+static gboolean toast_timeout(gpointer w) {
+    if (GTK_IS_WIDGET(w)) gtk_widget_destroy(GTK_WIDGET(w));
+    return G_SOURCE_REMOVE;
+}
+
+void show_toast(const char *msg) {
+    if (!main_window) return;
+    GtkWidget *w = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+    gtk_window_set_decorated(GTK_WINDOW(w), FALSE);
+    gtk_window_set_resizable(GTK_WINDOW(w), FALSE);
+    gtk_window_set_modal(GTK_WINDOW(w), FALSE);
+    gtk_window_set_transient_for(GTK_WINDOW(w), GTK_WINDOW(main_window));
+    gtk_window_set_skip_taskbar_hint(GTK_WINDOW(w), TRUE);
+    gtk_window_set_type_hint(GTK_WINDOW(w), GDK_WINDOW_TYPE_HINT_NOTIFICATION);
+
+    GtkWidget *l = gtk_label_new(msg);
+    gtk_widget_set_margin_start(l, 24); gtk_widget_set_margin_end(l, 24);
+    gtk_widget_set_margin_top(l, 12); gtk_widget_set_margin_bottom(l, 12);
+    gtk_container_add(GTK_CONTAINER(w), l);
+
+    GtkCssProvider *p = gtk_css_provider_new();
+    gtk_css_provider_load_from_data(p,
+        "window{background:#343A40;border-radius:8px;}"
+        "label{color:white;font-weight:600;font-size:13px;}", -1, NULL);
+    GtkStyleContext *ctx = gtk_widget_get_style_context(w);
+    gtk_style_context_add_provider(ctx, GTK_STYLE_PROVIDER(p), GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
+    g_object_unref(p);
+
+    gtk_window_set_default_size(GTK_WINDOW(w), -1, -1);
+    gint mx, my, mw, mh;
+    gtk_window_get_position(GTK_WINDOW(main_window), &mx, &my);
+    gtk_window_get_size(GTK_WINDOW(main_window), &mw, &mh);
+    gtk_window_move(GTK_WINDOW(w), mx + mw - 360, my + mh - 80);
+    gtk_widget_show_all(w);
+
+    guint *tag = g_new(guint, 1);
+    *tag = g_timeout_add(2000, toast_timeout, w);
+    g_object_weak_ref(G_OBJECT(w), toast_destroyed, tag);
 }
 
 void show_confirmation(const char *title, const char *msg, GCallback cb, gpointer data) {
@@ -593,6 +642,39 @@ void confirm_delete_patient(void) {
     if (tv) populate_patient_treeview(tv);
 }
 
+static gboolean on_patient_cell_clicked(GtkWidget *tv, GdkEventButton *ev, gpointer data) {
+    (void)data;
+    if (ev->button != 1 || ev->type != GDK_BUTTON_PRESS) return FALSE;
+    GtkTreePath *path;
+    GtkTreeViewColumn *col;
+    gint cx, cy;
+    if (!gtk_tree_view_get_path_at_pos(GTK_TREE_VIEW(tv), (gint)ev->x, (gint)ev->y, &path, &col, &cx, &cy))
+        return FALSE;
+    gint col_idx = -1;
+    GList *cols = gtk_tree_view_get_columns(GTK_TREE_VIEW(tv));
+    for (GList *l = cols; l; l = l->next) {
+        col_idx++;
+        if (l->data == (gpointer)col) break;
+    }
+    g_list_free(cols);
+    if (col_idx < 0) { gtk_tree_path_free(path); return FALSE; }
+    GtkTreeIter it;
+    GtkTreeModel *model = gtk_tree_view_get_model(GTK_TREE_VIEW(tv));
+    if (!gtk_tree_model_get_iter(model, &it, path)) { gtk_tree_path_free(path); return FALSE; }
+    gchar *text;
+    gtk_tree_model_get(model, &it, col_idx, &text, -1);
+    if (text) {
+        GtkClipboard *clip = gtk_clipboard_get(GDK_SELECTION_CLIPBOARD);
+        gtk_clipboard_set_text(clip, text, -1);
+        gchar *msg = g_strdup_printf("Copied: %s", text);
+        show_toast(msg);
+        g_free(msg);
+        g_free(text);
+    }
+    gtk_tree_path_free(path);
+    return FALSE;
+}
+
 GtkWidget* create_patient_list_view(void) {
     GtkWidget *sc = gtk_scrolled_window_new(NULL, NULL);
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 14);
@@ -629,6 +711,7 @@ GtkWidget* create_patient_list_view(void) {
     }
     g_object_set_data(G_OBJECT(content_stack), "patient-treeview", tv);
     g_object_set_data(G_OBJECT(content_stack), "patient-store", store);
+    g_signal_connect(tv, "button-press-event", G_CALLBACK(on_patient_cell_clicked), NULL);
 
     GtkWidget *tsc = gtk_scrolled_window_new(NULL, NULL);
     gtk_container_add(GTK_CONTAINER(tsc), tv);

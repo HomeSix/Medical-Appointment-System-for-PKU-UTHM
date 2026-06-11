@@ -25,6 +25,7 @@ extern char current_role[20];
 
 void setup_css(void);
 void show_notification(const char *message, const char *type);
+void show_toast(const char *msg);
 void show_confirmation(const char *title, const char *msg, GCallback cb, gpointer data);
 void switch_to_view(const char *name);
 void update_status(const char *msg);

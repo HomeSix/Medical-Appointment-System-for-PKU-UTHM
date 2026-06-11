@@ -53,7 +53,12 @@ headerbar label { color: @pure-white; font-weight: bold; font-size: 15px; }
     color: @secondary-blue; font-size: 17px; font-weight: bold;
 }
 
-button { border-radius: 8px; padding: 8px 18px; font-weight: 600; }
+button {
+    border-radius: 8px; padding: 8px 18px; font-weight: 600;
+    background: @pure-white; color: @dark-gray;
+    border: 2px solid alpha(@medium-gray, 0.25);
+}
+button:hover { background: @soft-gray; border-color: alpha(@medium-gray, 0.4); }
 button.primary {
     background: linear-gradient(135deg, @primary-blue, @accent-teal);
     color: @pure-white; border: none;
@@ -67,8 +72,8 @@ button.success:hover { background-color: shade(@success-green, 1.1); }
 button.danger { background-color: @danger-red; color: @pure-white; border: none; }
 button.danger:hover { background-color: shade(@danger-red, 1.1); }
 button.warning { background-color: @warning-amber; color: @dark-gray; border: none; }
-button.ghost { background-color: transparent; color: @primary-blue; border: 2px solid @primary-blue; }
-button.ghost:hover { background-color: @light-blue; }
+button.ghost { background-color: transparent; color: @secondary-blue; border: 2px solid @secondary-blue; }
+button.ghost:hover { background-color: @light-blue; color: @primary-blue; border-color: @primary-blue; }
 
 entry {
     background: @pure-white; border: 2px solid alpha(@medium-gray, 0.25);
@@ -79,12 +84,15 @@ entry:focus { border-color: @primary-blue; box-shadow: 0 0 0 3px alpha(@primary-
 combobox { border: 2px solid alpha(@medium-gray, 0.25); border-radius: 8px; }
 
 treeview { background: @pure-white; border: 1px solid alpha(@medium-gray, 0.15); }
+treeview row { background: @pure-white; }
+treeview row:nth-child(even) { background: alpha(@light-blue, 0.3); }
+treeview row:selected { background: @primary-blue; color: @pure-white; }
+treeview row:selected:focus { background: @secondary-blue; }
+treeview row:selected:hover { background: shade(@primary-blue, 0.85); }
 treeview header button {
     background: linear-gradient(135deg, @primary-blue, @secondary-blue);
     color: @pure-white; border: none; padding: 8px 12px; font-weight: bold;
 }
-treeview row:nth-child(even) { background: alpha(@light-blue, 0.3); }
-treeview row:selected { background-color: @primary-blue; color: @pure-white; }
 
 notebook tab {
     background: @soft-gray; color: @medium-gray;
