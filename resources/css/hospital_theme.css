@@ -94,6 +94,8 @@ treeview header button {
     color: @pure-white; border: none; padding: 8px 12px; font-weight: bold;
 }
 
+stack, scrolledwindow, .content-area { background-color: @soft-gray; }
+
 notebook tab {
     background: @soft-gray; color: @medium-gray;
     padding: 10px 20px; margin: 0 2px; font-weight: 500;

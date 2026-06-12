@@ -33,6 +33,7 @@ void setup_css(void) {
         g_error_free(err);
         const gchar *fallback =
             "window{background:#f8f9fa}"
+            "stack,scrolledwindow,.content-area{background:#f8f9fa}"
             "headerbar{background:#0066CC;color:white}"
             "button{border-radius:8px;padding:8px 18px;color:#343A40;background:#fff;border:2px solid #dee2e6}"
             "entry{border-radius:8px;border:2px solid #dee2e6;padding:8px}"
@@ -350,7 +351,10 @@ static void on_logout(GtkButton *btn, gpointer data) {
 static int is_logging_out = 0;
 
 void on_main_window_closed(void) {
-    if (!is_logging_out) gtk_main_quit();
+    if (!is_logging_out) {
+        main_window = NULL;
+        gtk_main_quit();
+    }
 }
 
 void do_logout(void) {
@@ -1188,6 +1192,7 @@ void update_queue_display(void) {
 
 GtkWidget* create_queue_view(void) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+    gtk_style_context_add_class(gtk_widget_get_style_context(box), "content-area");
     gtk_widget_set_margin_start(box, 24); gtk_widget_set_margin_end(box, 24);
     gtk_widget_set_margin_top(box, 24); gtk_widget_set_margin_bottom(box, 24);
 
@@ -1434,6 +1439,7 @@ gboolean draw_chart(GtkWidget *w, cairo_t *cr, gpointer data) {
 
 GtkWidget* create_search_view(void) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+    gtk_style_context_add_class(gtk_widget_get_style_context(box), "content-area");
     gtk_widget_set_margin_start(box, 24); gtk_widget_set_margin_end(box, 24);
     gtk_widget_set_margin_top(box, 24); gtk_widget_set_margin_bottom(box, 24);
 
@@ -1542,6 +1548,7 @@ void on_search_execute(GtkButton *btn, gpointer data) {
 
 GtkWidget* create_settings_view(void) {
     GtkWidget *box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 16);
+    gtk_style_context_add_class(gtk_widget_get_style_context(box), "content-area");
     gtk_widget_set_margin_start(box, 24); gtk_widget_set_margin_end(box, 24);
     gtk_widget_set_margin_top(box, 24); gtk_widget_set_margin_bottom(box, 24);
 
