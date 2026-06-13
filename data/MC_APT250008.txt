@@ -1,0 +1,25 @@
+═══════════════════════════════════════════════════
+      PUSAT KESIHATAN UNIVERSITI UTHM
+      MEDICAL CERTIFICATE
+═══════════════════════════════════════════════════
+
+Date Issued: 2026-06-13 12:04:47
+
+This is to certify that:
+
+  Name:            AFIF
+  IC Number:       021341235
+  Patient ID:      PKU250008
+  Faculty/Program: FSKTM / Walk-in
+
+was examined at Pusat Kesihatan Universiti UTHM on 13/06/2026.
+
+  Diagnosis:  yeay
+  Remarks:    saey
+
+  Doctor:     Dr. Ahmad Faiz
+  Department: Mental Health
+
+═══════════════════════════════════════════════════
+  Generated: 2026-06-13 12:04:47
+═══════════════════════════════════════════════════

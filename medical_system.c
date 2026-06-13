@@ -24,6 +24,7 @@
 #include <time.h>
 #include <math.h>
 #include <unistd.h>
+#include <sys/stat.h>
 
 #ifdef _WIN32
     #include <conio.h>
@@ -67,6 +68,7 @@
 
 static int currentYear = 2025;
 static int currentSeq = 1;
+static int currentAptSeq = 1;
 
 /* ================================================================
  * SHA-256 IMPLEMENTATION (Public Domain)
@@ -140,7 +142,7 @@ static void sha256_final(SHA256_CTX *ctx, unsigned char hash[]) {
     hash[i+24]=(ctx->state[6]>>(24-i*8))&0x000000ff;hash[i+28]=(ctx->state[7]>>(24-i*8))&0x000000ff;}
 }
 
-static void sha256_string(const char *str, char output[65]) {
+void sha256_string(const char *str, char output[65]) {
     SHA256_CTX ctx;
     unsigned char hash[32];
     sha256_init(&ctx);
@@ -373,8 +375,8 @@ void printHeader() {
     printf("║              PUSAT KESIHATAN UNIVERSITI UTHM                          ║\n");
     printf("║              Medical Appointment System v2.0                         ║\n");
     if (currentUser) {
-        printf("║  Logged in as: %-20s  Role: %-10s              ║\n",
-               currentUser->fullName, currentUser->role);
+        printf("║  Logged in as: %-20s                           ║\n",
+               currentUser->fullName);
     }
     printf("╚══════════════════════════════════════════════════════════════════════╝%s\n", RESET);
 }
@@ -490,19 +492,19 @@ void inputPassword(char* dest, int maxLen) {
     printf("\n");
 }
 
+static void print_prompt(const char *p) {
+    int len = strlen(p);
+    while (len > 0 && (p[len-1]==':' || p[len-1]==' ')) len--;
+    printf("%.*s (or press Enter to cancel): ", len, p);
+}
+
 void inputString(char* dest, int maxLen, const char* prompt) {
-    printf("%s", prompt);
-    if (fgets(dest, maxLen, stdin)) {
-        trimNewline(dest);
-        while (strlen(dest)==0) {
-            printf("Input cannot be empty. %s", prompt);
-            if (fgets(dest, maxLen, stdin)) trimNewline(dest);
-        }
-    }
+    print_prompt(prompt);
+    if (fgets(dest, maxLen, stdin)) trimNewline(dest);
 }
 
 void inputStringOptional(char* dest, int maxLen, const char* prompt) {
-    printf("%s", prompt);
+    print_prompt(prompt);
     if (fgets(dest, maxLen, stdin)) trimNewline(dest);
 }
 
@@ -534,8 +536,8 @@ void inputMenuChoice(int* dest, int min, int max) {
 
 void pressEnterToContinue() {
     printf("\nPress Enter to continue...");
-    while (getchar()!='\n' && getchar()!=EOF);
-    getchar();
+    int c;
+    do { c = getchar(); } while (c != '\n' && c != EOF);
 }
 
 /* ================================================================
@@ -676,11 +678,8 @@ void generatePatientID(char* id) {
 }
 
 void generateAppointmentID(char* id) {
-    static int aptSeq = 1;
-    static int aptYear = 0;
     int y = currentYear % 100;
-    if (aptYear != y) { aptSeq = 1; aptYear = y; }
-    snprintf(id, MAX_ID, "APT%02d%04d", y, aptSeq++);
+    snprintf(id, MAX_ID, "APT%02d%04d", y, currentAptSeq++);
 }
 
 /* ================================================================
@@ -744,33 +743,47 @@ void insertPatient() {
     if (!p) { printError("Memory allocation failed!"); return; }
 
     generatePatientID(p->patientID);
-    inputString(p->name, MAX_NAME, "Enter Full Name: ");
-    inputString(p->icNumber, MAX_IC, "Enter IC Number (000000-00-0000): ");
-    while (!validateIC(p->icNumber)) {
-        printError("Invalid IC format! Use: 000000-00-0000"); inputString(p->icNumber, MAX_IC, "Enter IC Number: ");
+    inputString(p->name, MAX_NAME, "Enter Full Name");
+    if (strlen(p->name)==0) { free(p); printInfo("Cancelled."); return; }
+    while (1) {
+        inputString(p->icNumber, MAX_IC, "Enter IC Number (000000-00-0000)");
+        if (strlen(p->icNumber)==0) { free(p); printInfo("Cancelled."); return; }
+        if (validateIC(p->icNumber)) break;
+        printError("Invalid IC format! Use: 000000-00-0000");
     }
-    inputString(p->phone, MAX_PHONE, "Enter Phone Number (01xxxxxxxxx): ");
-    while (!validatePhone(p->phone)) {
-        printError("Invalid phone! Must be 10-11 digits starting with 01"); inputString(p->phone, MAX_PHONE, "Enter Phone Number: ");
+    while (1) {
+        inputString(p->phone, MAX_PHONE, "Enter Phone Number (01xxxxxxxxx)");
+        if (strlen(p->phone)==0) { free(p); printInfo("Cancelled."); return; }
+        if (validatePhone(p->phone)) break;
+        printError("Invalid phone! Must be 10-11 digits starting with 01");
     }
-    inputString(p->email, MAX_EMAIL, "Enter Email: ");
-    while (!validateEmail(p->email)) {
-        printError("Invalid email format!"); inputString(p->email, MAX_EMAIL, "Enter Email: ");
+    while (1) {
+        inputString(p->email, MAX_EMAIL, "Enter Email");
+        if (strlen(p->email)==0) { free(p); printInfo("Cancelled."); return; }
+        if (validateEmail(p->email)) break;
+        printError("Invalid email format!");
     }
-    inputString(p->faculty, MAX_FACULTY, "Enter Faculty: ");
-    inputString(p->program, MAX_PROGRAM, "Enter Program: ");
-    inputString(p->gender, MAX_GENDER, "Enter Gender (Male/Female/Other): ");
-    while (!validateGender(p->gender)) {
-        printError("Invalid gender! Use Male, Female, or Other"); inputString(p->gender, MAX_GENDER, "Enter Gender: ");
+    inputString(p->faculty, MAX_FACULTY, "Enter Faculty");
+    if (strlen(p->faculty)==0) { free(p); printInfo("Cancelled."); return; }
+    inputString(p->program, MAX_PROGRAM, "Enter Program");
+    if (strlen(p->program)==0) { free(p); printInfo("Cancelled."); return; }
+    while (1) {
+        inputString(p->gender, MAX_GENDER, "Enter Gender (Male/Female/Other)");
+        if (strlen(p->gender)==0) { free(p); printInfo("Cancelled."); return; }
+        if (validateGender(p->gender)) break;
+        printError("Invalid gender! Use Male, Female, or Other");
     }
-    p->age = inputIntRange("Enter Age (1-120): ", 1, 120);
-    inputString(p->bloodType, MAX_BLOOD, "Enter Blood Type (A+/A-/B+/B-/AB+/AB-/O+/O-): ");
-    while (!validateBloodType(p->bloodType)) {
-        printError("Invalid blood type!"); inputString(p->bloodType, MAX_BLOOD, "Enter Blood Type: ");
+    p->age = inputIntRange("Enter Age (1-120)", 1, 120);
+    while (1) {
+        inputString(p->bloodType, MAX_BLOOD, "Enter Blood Type (A+/A-/B+/B-/AB+/AB-/O+/O-)");
+        if (strlen(p->bloodType)==0) { free(p); printInfo("Cancelled."); return; }
+        if (validateBloodType(p->bloodType)) break;
+        printError("Invalid blood type!");
     }
-    inputStringOptional(p->allergies, MAX_ALLERGIES, "Enter Allergies (or None): ");
+    inputStringOptional(p->allergies, MAX_ALLERGIES, "Enter Allergies (or None)");
     if (strlen(p->allergies)==0) strcpy(p->allergies, "None");
-    inputString(p->emergencyContact, MAX_EMERGENCY, "Enter Emergency Contact: ");
+    inputString(p->emergencyContact, MAX_EMERGENCY, "Enter Emergency Contact");
+    if (strlen(p->emergencyContact)==0) { free(p); printInfo("Cancelled."); return; }
 
     insertPatientToList(p);
     insertPatientToBST(&patientBST, p);
@@ -784,7 +797,8 @@ void insertPatient() {
 
 void updatePatientRecord() {
     char id[MAX_ID];
-    inputString(id, MAX_ID, "Enter Patient ID to update: ");
+    inputString(id, MAX_ID, "Enter Patient ID to update");
+    if (strlen(id)==0) { printInfo("Cancelled."); return; }
     Patient* p = findPatientByID(id);
     if (!p) { printError("Patient not found!"); return; }
 
@@ -807,6 +821,7 @@ void updatePatientRecord() {
     inputStringOptional(temp, MAX_BLOOD, "Blood Type: "); if(strlen(temp)) strcpy(p->bloodType,temp);
     inputStringOptional(temp, MAX_ALLERGIES, "Allergies: "); if(strlen(temp)) strcpy(p->allergies,temp);
     inputStringOptional(temp, MAX_EMERGENCY, "Emergency Contact: "); if(strlen(temp)) strcpy(p->emergencyContact,temp);
+    savePatients();
 
     char log[100]; snprintf(log, sizeof(log), "UPDATE_PATIENT | ID: %s", id);
     appendAuditLog(log, id, "SUCCESS");
@@ -815,7 +830,8 @@ void updatePatientRecord() {
 
 void removePatientByID() {
     char id[MAX_ID];
-    inputString(id, MAX_ID, "Enter Patient ID to remove: ");
+    inputString(id, MAX_ID, "Enter Patient ID to remove");
+    if (strlen(id)==0) { printInfo("Cancelled."); return; }
     Patient* p = findPatientByID(id);
     if (!p) { printError("Patient not found!"); return; }
 
@@ -859,7 +875,8 @@ void displayAllPatients() {
 
 void displayPatientHistory() {
     char id[MAX_ID];
-    inputString(id, MAX_ID, "Enter Patient ID: ");
+    inputString(id, MAX_ID, "Enter Patient ID");
+    if (strlen(id)==0) { printInfo("Cancelled."); return; }
     Patient* p = findPatientByID(id);
     if (!p) { printError("Patient not found!"); return; }
 
@@ -944,23 +961,29 @@ void insertAppointment() {
     strcpy(a->diagnosis, "Pending");
     strcpy(a->prescription, "Pending");
 
-    inputString(a->patientID, MAX_ID, "Enter Patient ID: ");
+    inputString(a->patientID, MAX_ID, "Enter Patient ID");
+    if (strlen(a->patientID)==0) { free(a); printInfo("Cancelled."); return; }
     if (!findPatientByID(a->patientID)) {
         printError("Patient not found! Please register patient first."); free(a); return;
     }
 
-    inputString(a->date, MAX_DATE, "Enter Date (DD/MM/YYYY): ");
-    while (!validateDate(a->date)) {
-        printError("Invalid date! Use DD/MM/YYYY format."); inputString(a->date, MAX_DATE, "Enter Date (DD/MM/YYYY): ");
+    while (1) {
+        inputString(a->date, MAX_DATE, "Enter Date (DD/MM/YYYY)");
+        if (strlen(a->date)==0) { free(a); printInfo("Cancelled."); return; }
+        if (validateDate(a->date)) break;
+        printError("Invalid date! Use DD/MM/YYYY format.");
+    }
+    while (1) {
+        inputString(a->time, MAX_TIME, "Enter Time (HH:MM AM/PM)");
+        if (strlen(a->time)==0) { free(a); printInfo("Cancelled."); return; }
+        if (validateTime(a->time)) break;
+        printError("Invalid time! Use HH:MM AM/PM.");
     }
 
-    inputString(a->time, MAX_TIME, "Enter Time (HH:MM AM/PM): ");
-    while (!validateTime(a->time)) {
-        printError("Invalid time! Use HH:MM AM/PM."); inputString(a->time, MAX_TIME, "Enter Time (HH:MM AM/PM): ");
-    }
-
-    inputString(a->department, MAX_DEPT, "Enter Department: ");
-    inputString(a->doctorName, MAX_DOCTOR, "Enter Doctor Name: ");
+    inputString(a->department, MAX_DEPT, "Enter Department");
+    if (strlen(a->department)==0) { free(a); printInfo("Cancelled."); return; }
+    inputString(a->doctorName, MAX_DOCTOR, "Enter Doctor Name");
+    if (strlen(a->doctorName)==0) { free(a); printInfo("Cancelled."); return; }
 
     if (hasConflict(a->date, a->time, a->doctorName, a->patientID)) {
         printError("Time conflict detected!"); free(a); return;
@@ -968,6 +991,7 @@ void insertAppointment() {
 
     inputStringOptional(a->symptoms, MAX_SYMPTOMS, "Enter Symptoms: ");
     if (strlen(a->symptoms)==0) strcpy(a->symptoms, "Not specified");
+    if (strlen(a->remarks)==0) strcpy(a->remarks, "N/A");
 
     insertAppointmentToList(a);
     char log[100]; snprintf(log, sizeof(log), "INSERT_APPOINTMENT | ID: %s", a->appointmentID);
@@ -987,7 +1011,8 @@ Appointment* findAppointmentByID(const char* id) {
 
 void updateAppointment() {
     char id[MAX_ID];
-    inputString(id, MAX_ID, "Enter Appointment ID to update: ");
+    inputString(id, MAX_ID, "Enter Appointment ID to update");
+    if (strlen(id)==0) { printInfo("Cancelled."); return; }
     Appointment* a = findAppointmentByID(id);
     if (!a) { printError("Appointment not found!"); return; }
 
@@ -1002,6 +1027,7 @@ void updateAppointment() {
     inputStringOptional(temp, MAX_DEPT, "Department: "); if(strlen(temp)) strcpy(a->department,temp);
     inputStringOptional(temp, MAX_DOCTOR, "Doctor: "); if(strlen(temp)) strcpy(a->doctorName,temp);
     inputStringOptional(temp, MAX_SYMPTOMS, "Symptoms: "); if(strlen(temp)) strcpy(a->symptoms,temp);
+    saveAppointments();
 
     char log[100]; snprintf(log, sizeof(log), "UPDATE_APPOINTMENT | ID: %s", id);
     appendAuditLog(log, id, "SUCCESS");
@@ -1010,7 +1036,8 @@ void updateAppointment() {
 
 void cancelAppointment() {
     char id[MAX_ID];
-    inputString(id, MAX_ID, "Enter Appointment ID to cancel: ");
+    inputString(id, MAX_ID, "Enter Appointment ID to cancel");
+    if (strlen(id)==0) { printInfo("Cancelled."); return; }
     Appointment* a = findAppointmentByID(id);
     if (!a) { printError("Appointment not found!"); return; }
 
@@ -1019,6 +1046,7 @@ void cancelAppointment() {
     if (tolower(confirm)!='y') { printInfo("Cancellation aborted."); return; }
 
     strcpy(a->status, "Cancelled");
+    saveAppointments();
     char log[100]; snprintf(log, sizeof(log), "CANCEL_APPOINTMENT | ID: %s", id);
     appendAuditLog(log, id, "SUCCESS");
     printSuccess("Appointment cancelled!");
@@ -1026,7 +1054,8 @@ void cancelAppointment() {
 
 void completeAppointment() {
     char id[MAX_ID];
-    inputString(id, MAX_ID, "Enter Appointment ID to complete: ");
+    inputString(id, MAX_ID, "Enter Appointment ID to complete");
+    if (strlen(id)==0) { printInfo("Cancelled."); return; }
     Appointment* a = findAppointmentByID(id);
     if (!a) { printError("Appointment not found!"); return; }
 
@@ -1038,6 +1067,7 @@ void completeAppointment() {
     inputStringOptional(a->prescription, MAX_PRESCRIPTION, "Enter Prescription: ");
     inputStringOptional(a->remarks, MAX_REMARKS, "Enter Remarks: ");
     strcpy(a->status, "Completed");
+    saveAppointments();
 
     char log[100]; snprintf(log, sizeof(log), "COMPLETE_APPOINTMENT | ID: %s", id);
     appendAuditLog(log, id, "SUCCESS");
@@ -1048,27 +1078,28 @@ void completeAppointment() {
     if (tolower(confirm)=='y') {
         Patient* p = findPatientByID(a->patientID);
         if (p) {
+            mkdir("data/mc", 0755);
             char mcFile[100];
-            snprintf(mcFile, sizeof(mcFile), "data/MC_%s.txt", a->appointmentID);
+            snprintf(mcFile, sizeof(mcFile), "data/mc/MC_%s.txt", a->appointmentID);
             FILE* f = fopen(mcFile, "w");
             if (f) {
-                fprintf(f, "═══════════════════════════════════════════════════\n");
-                fprintf(f, "      PUSAT KESIHATAN UNIVERSITI UTHM\n");
-                fprintf(f, "      MEDICAL CERTIFICATE\n");
-                fprintf(f, "═══════════════════════════════════════════════════\n\n");
+                fprintf(f, "═══════════════════════════════════════════════════════════\n");
+                fprintf(f, "          PUSAT KESIHATAN UNIVERSITI UTHM\n");
+                fprintf(f, "              MEDICAL CERTIFICATE\n");
+                fprintf(f, "═══════════════════════════════════════════════════════════\n\n");
+                fprintf(f, "Date Issued: %s\n\n", getCurrentTimestamp());
                 fprintf(f, "This is to certify that:\n\n");
-                fprintf(f, "  Name:       %s\n", p->name);
-                fprintf(f, "  IC Number:  %s\n", p->icNumber);
-                fprintf(f, "  Patient ID: %s\n\n", p->patientID);
+                fprintf(f, "  Name:            %s\n", p->name);
+                fprintf(f, "  IC Number:       %s\n", p->icNumber);
+                fprintf(f, "  Patient ID:      %s\n\n", p->patientID);
                 fprintf(f, "was examined at PKU UTHM on %s.\n\n", a->date);
-                fprintf(f, "  Diagnosis: %s\n", a->diagnosis);
-                fprintf(f, "  Remarks:   %s\n\n", a->remarks);
-                fprintf(f, "  Doctor:    %s\n", a->doctorName);
+                fprintf(f, "  Diagnosis:  %s\n", a->diagnosis);
+                fprintf(f, "  Remarks:    %s\n\n", a->remarks);
+                fprintf(f, "  Doctor:     %s\n", a->doctorName);
                 fprintf(f, "  Department: %s\n\n", a->department);
-                fprintf(f, "═══════════════════════════════════════════════════\n");
+                fprintf(f, "═══════════════════════════════════════════════════════════\n");
                 fprintf(f, "  Generated: %s\n", getCurrentTimestamp());
-                fprintf(f, "  This is a computer-generated certificate.\n");
-                fprintf(f, "═══════════════════════════════════════════════════\n");
+                fprintf(f, "═══════════════════════════════════════════════════════════\n");
                 fclose(f);
                 printSuccess("Medical Certificate generated!");
                 printf("File: %s\n", mcFile);
@@ -1093,7 +1124,8 @@ void displayAllAppointments() {
 
 void displayAppointmentsByDate() {
     char date[MAX_DATE];
-    inputString(date, MAX_DATE, "Enter Date (DD/MM/YYYY): ");
+    inputString(date, MAX_DATE, "Enter Date (DD/MM/YYYY)");
+    if (strlen(date)==0) { printInfo("Cancelled."); return; }
     if (!validateDate(date)) { printError("Invalid date!"); return; }
 
     printf("\n%sAppointments on %s%s\n", BOLD, date, RESET);
@@ -1144,7 +1176,8 @@ void displayTodayAppointments() {
 void enqueueWalkIn() {
     QueueNode* q = (QueueNode*)malloc(sizeof(QueueNode));
     if (!q) { printError("Memory allocation failed!"); return; }
-    inputString(q->patientID, MAX_ID, "Enter Patient ID: ");
+    inputString(q->patientID, MAX_ID, "Enter Patient ID");
+    if (strlen(q->patientID)==0) { free(q); printInfo("Cancelled."); return; }
     Patient* p = findPatientByID(q->patientID);
     if (!p) { printError("Patient not found!"); free(q); return; }
     strcpy(q->name, p->name);
@@ -1277,6 +1310,7 @@ int popRedo() {
 }
 
 void undoLastOperation() { popUndo(); }
+void redoLastOperation() { popRedo(); }
 
 /* ================================================================
  * FILE I/O OPERATIONS
@@ -1363,6 +1397,17 @@ void loadAppointments() {
         } else free(a);
     }
     fclose(f);
+
+    Appointment *acur = appointmentList;
+    int maxAptSeq = 0;
+    while (acur) {
+        int seq, yr;
+        if (sscanf(acur->appointmentID, "APT%2d%4d", &yr, &seq) == 2) {
+            if (seq > maxAptSeq) maxAptSeq = seq;
+        }
+        acur = acur->next;
+    }
+    if (maxAptSeq >= currentAptSeq) currentAptSeq = maxAptSeq + 1;
 }
 
 void loadSchedule() {
@@ -1400,6 +1445,8 @@ void savePatients() {
     fclose(f);
 }
 
+static const char* nz(const char* s) { return (s && strlen(s) > 0) ? s : "N/A"; }
+
 void saveAppointments() {
     char path[100]; snprintf(path, sizeof(path), "%sappointments.txt", FILE_DIR);
     FILE* f = fopen(path, "w");
@@ -1409,7 +1456,7 @@ void saveAppointments() {
         fprintf(f, "%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%s\n",
                 cur->appointmentID, cur->patientID, cur->date, cur->time,
                 cur->department, cur->doctorName, cur->status,
-                cur->symptoms, cur->diagnosis, cur->prescription, cur->remarks);
+                nz(cur->symptoms), nz(cur->diagnosis), nz(cur->prescription), nz(cur->remarks));
         cur = cur->next;
     }
     fclose(f);
@@ -1611,7 +1658,8 @@ void advancedSearch() {
 
     if (choice == 1) {
         char name[MAX_NAME];
-        inputString(name, MAX_NAME, "Enter patient name to search: ");
+        inputString(name, MAX_NAME, "Enter patient name to search");
+        if (strlen(name)==0) { printInfo("Cancelled."); return; }
         printf("\n%sSearch Results for '%s'%s\n", BOLD, name, RESET);
         printf("%s%-12s %-25s %-15s %-15s%s\n", BOLD, "ID", "Name", "IC", "Phone", RESET);
         Patient* cur = patientList;
@@ -1626,7 +1674,8 @@ void advancedSearch() {
         if(!found) printInfo("No patients found.");
     } else if (choice == 2) {
         char id[MAX_ID];
-        inputString(id, MAX_ID, "Enter Appointment ID: ");
+        inputString(id, MAX_ID, "Enter Appointment ID");
+        if (strlen(id)==0) { printInfo("Cancelled."); return; }
         Appointment* a = findAppointmentByID(id);
         if (a) {
             printf("\n%sAppointment Found:%s\n", BOLD, RESET);
@@ -1645,8 +1694,10 @@ void advancedSearch() {
 
 void searchByDateRange() {
     char start[MAX_DATE], end[MAX_DATE];
-    inputString(start, MAX_DATE, "Start Date (DD/MM/YYYY): ");
-    inputString(end, MAX_DATE, "End Date (DD/MM/YYYY): ");
+    inputString(start, MAX_DATE, "Start Date (DD/MM/YYYY)");
+    if (strlen(start)==0) { printInfo("Cancelled."); return; }
+    inputString(end, MAX_DATE, "End Date (DD/MM/YYYY)");
+    if (strlen(end)==0) { printInfo("Cancelled."); return; }
     if (!validateDate(start) || !validateDate(end)) {
         printError("Invalid date format!"); return;
     }
@@ -1720,7 +1771,8 @@ void statisticsDashboard() {
 
 void generateMC() {
     char aptID[MAX_ID];
-    inputString(aptID, MAX_ID, "Enter Appointment ID: ");
+    inputString(aptID, MAX_ID, "Enter Appointment ID");
+    if (strlen(aptID)==0) { printInfo("Cancelled."); return; }
     Appointment* a = findAppointmentByID(aptID);
     if (!a) { printError("Appointment not found!"); return; }
     if (strcmp(a->status, "Completed")!=0) {
@@ -1729,8 +1781,9 @@ void generateMC() {
     Patient* p = findPatientByID(a->patientID);
     if (!p) { printError("Patient not found!"); return; }
 
+    mkdir("data/mc", 0755);
     char mcFile[100];
-    snprintf(mcFile, sizeof(mcFile), "data/MC_%s.txt", aptID);
+    snprintf(mcFile, sizeof(mcFile), "data/mc/MC_%s.txt", aptID);
     FILE* f = fopen(mcFile, "w");
     if (!f) { printError("Could not create MC file!"); return; }
 
@@ -1751,8 +1804,7 @@ void generateMC() {
     fprintf(f, "  Doctor:     %s\n", a->doctorName);
     fprintf(f, "  Department: %s\n\n", a->department);
     fprintf(f, "═══════════════════════════════════════════════════════════\n");
-    fprintf(f, "  This is a computer-generated certificate.\n");
-    fprintf(f, "  Generated by PKU UTHM Medical System v2.0\n");
+    fprintf(f, "  Generated: %s\n", getCurrentTimestamp());
     fprintf(f, "═══════════════════════════════════════════════════════════\n");
     fclose(f);
 
@@ -1798,7 +1850,7 @@ void manageUsers() {
             char pass[MAX_PASSWORD];
             printf("Password: "); inputPassword(pass, MAX_PASSWORD);
             sha256_string(pass, u->password);
-            inputString(u->role, MAX_ROLE, "Role (admin/doctor/staff/student): ");
+            strcpy(u->role, "admin");
             inputString(u->fullName, MAX_FULLNAME, "Full Name: ");
             strcpy(u->lastLogin, "Never");
             u->isActive = 1;
@@ -1866,7 +1918,8 @@ void patientMenu() {
             case 1: insertPatient(); break;
             case 2: {
                 char id[MAX_ID];
-                inputString(id, MAX_ID, "Enter Patient ID: ");
+                inputString(id, MAX_ID, "Enter Patient ID");
+                if (strlen(id)==0) { printInfo("Cancelled."); break; }
                 Patient* p = findPatientByID(id);
                 if (!p) { printError("Patient not found!"); break; }
                 printf("\n%sPatient Details:%s\n", BOLD, RESET);
@@ -1881,7 +1934,8 @@ void patientMenu() {
             case 5: displayAllPatients(); break;
             case 6: {
                 char name[MAX_NAME];
-                inputString(name, MAX_NAME, "Enter name: ");
+                inputString(name, MAX_NAME, "Enter name");
+                if (strlen(name)==0) { printInfo("Cancelled."); break; }
                 Patient* p = findPatientByName(name);
                 if (!p) { printInfo("No patient found with that name."); break; }
                 printf("Found: %s (%s)\n", p->name, p->patientID);
@@ -1913,7 +1967,8 @@ void appointmentMenu() {
             case 1: insertAppointment(); break;
             case 2: {
                 char id[MAX_ID];
-                inputString(id, MAX_ID, "Enter Appointment ID: ");
+                inputString(id, MAX_ID, "Enter Appointment ID");
+                if (strlen(id)==0) { printInfo("Cancelled."); break; }
                 Appointment* a = findAppointmentByID(id);
                 if (!a) { printError("Not found!"); break; }
                 printf("ID: %s\nPatient: %s\nDate: %s\nTime: %s\nDoctor: %s\nDept: %s\nStatus: %s\n",
@@ -1993,7 +2048,8 @@ void searchMenu() {
         switch (choice) {
             case 1: {
                 char id[MAX_ID];
-                inputString(id, MAX_ID, "Enter Patient ID: ");
+                inputString(id, MAX_ID, "Enter Patient ID");
+                if (strlen(id)==0) { printInfo("Cancelled."); break; }
                 Patient* p = findPatientByID(id);
                 if (p) printf("Found: %s - %s\n", p->patientID, p->name);
                 else printError("Patient not found!");
@@ -2040,7 +2096,7 @@ void queueMenu() {
 
 void adminMenu() {
     while (1) {
-        if (!checkSession() || !hasRole("admin")) return;
+        if (!checkSession()) return;
         clearScreen(); printHeader();
         printBreadcrumb("Main Menu > Admin Settings");
         printf("  [1] Manage User Accounts\n");
@@ -2099,15 +2155,14 @@ void mainMenu() {
         printf("║  [3] 📊 Reports & Statistics                 ║\n");
         printf("║  [4] 🔍 Search Records                       ║\n");
         printf("║  [5] 🏥 Walk-in Queue                        ║\n");
-        if (hasRole("admin"))
-            printf("║  [6] ⚙  Admin Settings                       ║\n");
+        printf("║  [6] ⚙  Admin Settings                       ║\n");
         printf("║  [7] 💾 Save All Data                        ║\n");
         printf("║  [8] 🔄 Undo Last Operation                  ║\n");
         printf("║  [9] 🔁 Redo Last Operation                  ║\n");
         printf("║  [0] 🚪 Logout                               ║\n");
         printf("╚══════════════════════════════════════════════╝\n");
-        printf("User: %s | Role: %s | %s\n",
-               currentUser->username, currentUser->role, getCurrentTimestamp());
+        printf("User: %s | %s\n",
+               currentUser->username, getCurrentTimestamp());
 
         int choice = inputIntRange("Enter choice: ", 0, 9);
         if (choice == 0) { logout(); return; }
@@ -2118,7 +2173,7 @@ void mainMenu() {
             case 3: reportMenu(); break;
             case 4: searchMenu(); break;
             case 5: queueMenu(); break;
-            case 6: if (hasRole("admin")) adminMenu(); else printError("Access denied!"); break;
+            case 6: adminMenu(); break;
             case 7: saveAll(); break;
             case 8: undoLastOperation(); break;
             case 9: popRedo(); break;

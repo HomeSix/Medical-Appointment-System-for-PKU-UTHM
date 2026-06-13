@@ -21,7 +21,6 @@ extern GtkWidget *login_error_label;
 extern GtkWidget *username_entry;
 extern GtkWidget *password_entry;
 extern char current_username[50];
-extern char current_role[20];
 
 void setup_css(void);
 void show_notification(const char *message, const char *type);

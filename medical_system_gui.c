@@ -8,6 +8,7 @@
 
 #include "medical_system_gui.h"
 #include <math.h>
+#include <sys/stat.h>
 
 /* ==================== GLOBAL WIDGETS ==================== */
 GtkWidget *main_window = NULL;
@@ -20,7 +21,6 @@ GtkWidget *login_error_label = NULL;
 GtkWidget *username_entry = NULL;
 GtkWidget *password_entry = NULL;
 char current_username[50] = "";
-char current_role[20] = "";
 
 /* ==================== CSS & THEME ==================== */
 
@@ -238,17 +238,27 @@ static void on_login(GtkButton *btn, gpointer data) {
         gtk_label_set_markup(GTK_LABEL(login_error_label), "<span color='#DC3545' weight='bold'>Please enter username and password.</span>");
         gtk_widget_show(login_error_label); return;
     }
+
+    User *usr = findUser(u);
+    if (usr && !usr->isActive) {
+        gtk_label_set_markup(GTK_LABEL(login_error_label), "<span color='#DC3545' weight='bold'>Account is locked. Contact admin.</span>");
+        gtk_widget_show(login_error_label); return;
+    }
+
     gtk_spinner_start(GTK_SPINNER(login_spinner));
     gtk_widget_show(login_spinner);
     gtk_widget_set_sensitive(username_entry, FALSE);
     gtk_widget_set_sensitive(password_entry, FALSE);
 
+    static int failed_attempts = 0;
+    static char locked_user[50] = "";
+
     int ok = authenticate(u, p);
     if (ok) {
-        User *usr = findUser(u);
+        failed_attempts = 0;
+        memset(locked_user, 0, 50);
         if (usr) {
             strncpy(current_username, usr->username, 49);
-            strncpy(current_role, usr->role, 19);
             currentUser = usr;
             strcpy(currentUser->lastLogin, getCurrentTimestamp());
             appendAuditLog("LOGIN", u, "SUCCESS");
@@ -262,7 +272,24 @@ static void on_login(GtkButton *btn, gpointer data) {
         gtk_widget_hide(login_spinner);
         gtk_widget_set_sensitive(username_entry, TRUE);
         gtk_widget_set_sensitive(password_entry, TRUE);
-        gtk_label_set_markup(GTK_LABEL(login_error_label), "<span color='#DC3545' weight='bold'>Invalid credentials. Try again.</span>");
+        failed_attempts++;
+        strncpy(locked_user, u, 49);
+
+        int remaining = 3 - failed_attempts;
+        if (remaining > 0) {
+            gchar *msg = g_strdup_printf("<span color='#DC3545' weight='bold'>Invalid credentials. %d attempt(s) remaining.</span>", remaining);
+            gtk_label_set_markup(GTK_LABEL(login_error_label), msg);
+            g_free(msg);
+        } else {
+            if (usr) {
+                usr->isActive = 0;
+                saveUsers();
+                appendAuditLog("ACCOUNT_LOCKED", u, "3 FAILED ATTEMPTS");
+            }
+            gtk_label_set_markup(GTK_LABEL(login_error_label), "<span color='#DC3545' weight='bold'>Account locked after 3 failed attempts.</span>");
+            gtk_widget_set_sensitive(username_entry, FALSE);
+            gtk_widget_set_sensitive(password_entry, FALSE);
+        }
         gtk_widget_show(login_error_label);
     }
 }
@@ -352,6 +379,7 @@ static int is_logging_out = 0;
 
 void on_main_window_closed(void) {
     if (!is_logging_out) {
+        saveAll();
         main_window = NULL;
         gtk_main_quit();
     }
@@ -365,7 +393,6 @@ void do_logout(void) {
     }
     saveAll();
     memset(current_username, 0, 50);
-    memset(current_role, 0, 20);
     if (main_window) { gtk_widget_destroy(main_window); main_window = NULL; }
     is_logging_out = 0;
     create_login_window();
@@ -374,7 +401,20 @@ void do_logout(void) {
 }
 
 /* ==================== SIDEBAR ==================== */
-typedef struct { const char *label; const char *icon; const char *view; const char *roles; } NavItem;
+typedef struct { const char *label; const char *icon; const char *view; } NavItem;
+
+/* forward declarations used by callbacks */
+void populate_patient_treeview(GtkWidget *tv);
+void populate_appointment_list(GtkWidget *list, const char *date);
+void update_queue_display(void);
+void update_dashboard_stats(void);
+static void update_report_stats(void);
+static void refresh_appointment_list(void);
+static void on_apt_complete(GtkButton *btn, gpointer data);
+static void on_apt_cancel(GtkButton *btn, gpointer data);
+static void on_apt_generate_mc(GtkButton *btn, gpointer data);
+static void on_change_password(GtkButton *btn, gpointer data);
+static void on_view_schedule(GtkButton *btn, gpointer data);
 
 static void on_sidebar_click(GtkButton *btn, gpointer data) {
     (void)data;
@@ -382,18 +422,12 @@ static void on_sidebar_click(GtkButton *btn, gpointer data) {
     if (!vn) return;
     switch_to_view(vn);
     GtkWidget *tv = g_object_get_data(G_OBJECT(content_stack), "patient-treeview");
-    GtkWidget *al = g_object_get_data(G_OBJECT(content_stack), "appointments-list");
     if (strcmp(vn, "patients") == 0 && tv) populate_patient_treeview(tv);
-    if (strcmp(vn, "appointments") == 0 && al) populate_appointment_list(al, NULL);
+    if (strcmp(vn, "appointments") == 0) refresh_appointment_list();
     if (strcmp(vn, "queue") == 0) update_queue_display();
     if (strcmp(vn, "dashboard") == 0) update_dashboard_stats();
+    if (strcmp(vn, "reports") == 0) update_report_stats();
 }
-
-/* forward declarations */
-void populate_patient_treeview(GtkWidget *tv);
-void populate_appointment_list(GtkWidget *list, const char *date);
-void update_queue_display(void);
-void update_dashboard_stats(void);
 
 void create_sidebar(void) {
     sidebar_box = gtk_box_new(GTK_ORIENTATION_VERTICAL, 3);
@@ -414,14 +448,14 @@ void create_sidebar(void) {
     gtk_box_pack_start(GTK_BOX(sidebar_box), gtk_separator_new(GTK_ORIENTATION_HORIZONTAL), FALSE, FALSE, 6);
 
     NavItem items[] = {
-        {"Dashboard", "computer", "dashboard", "admin,doctor,staff"},
-        {"Patients", "system-users", "patients", "admin,doctor,staff"},
-        {"Appointments", "office-calendar", "appointments", "admin,doctor,staff"},
-        {"Walk-in Queue", "list-add", "queue", "admin,doctor,staff"},
-        {"Reports", "x-office-spreadsheet", "reports", "admin,doctor,staff"},
-        {"Search", "system-search", "search", "admin,doctor,staff"},
-        {"Settings", "preferences-system", "settings", "admin"},
-        {NULL, NULL, NULL, NULL}
+        {"Dashboard", "computer", "dashboard"},
+        {"Patients", "system-users", "patients"},
+        {"Appointments", "office-calendar", "appointments"},
+        {"Walk-in Queue", "list-add", "queue"},
+        {"Reports", "x-office-spreadsheet", "reports"},
+        {"Search", "system-search", "search"},
+        {"Settings", "preferences-system", "settings"},
+        {NULL, NULL, NULL}
     };
 
     for (int i = 0; items[i].label; i++) {
@@ -434,9 +468,7 @@ void create_sidebar(void) {
         gtk_box_pack_start(GTK_BOX(hb), lb, TRUE, TRUE, 0);
         gtk_container_add(GTK_CONTAINER(btn), hb);
         g_object_set_data_full(G_OBJECT(btn), "view-name", g_strdup(items[i].view), g_free);
-        g_object_set_data_full(G_OBJECT(btn), "roles", g_strdup(items[i].roles), g_free);
         g_signal_connect(btn, "clicked", G_CALLBACK(on_sidebar_click), NULL);
-        g_object_set_data(G_OBJECT(btn), "allowed-roles", (gpointer)items[i].roles);
         gtk_box_pack_start(GTK_BOX(sidebar_box), btn, FALSE, FALSE, 1);
     }
 
@@ -445,24 +477,45 @@ void create_sidebar(void) {
     gtk_style_context_add_class(gtk_widget_get_style_context(lo), "danger");
     g_signal_connect(lo, "clicked", G_CALLBACK(on_logout), NULL);
     gtk_box_pack_end(GTK_BOX(sidebar_box), lo, FALSE, FALSE, 4);
-
-    GList *ch = gtk_container_get_children(GTK_CONTAINER(sidebar_box));
-    for (GList *l = ch; l; l = l->next) {
-        const char *rl = g_object_get_data(G_OBJECT(l->data), "allowed-roles");
-        if (rl && !strstr(rl, current_role))
-            gtk_widget_set_visible(GTK_WIDGET(l->data), FALSE);
-    }
-    g_list_free(ch);
 }
 
 /* ==================== HEADER ==================== */
+static void on_undo(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    if (undoStack.count == 0) { show_notification("Nothing to undo.", "info"); return; }
+    undoLastOperation();
+    show_toast("Undo completed");
+    GtkWidget *tv = g_object_get_data(G_OBJECT(content_stack), "patient-treeview");
+    if (tv) populate_patient_treeview(tv);
+    refresh_appointment_list();
+}
+
+static void on_redo(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    if (redoStack.count == 0) { show_notification("Nothing to redo.", "info"); return; }
+    redoLastOperation();
+    show_toast("Redo completed");
+    GtkWidget *tv = g_object_get_data(G_OBJECT(content_stack), "patient-treeview");
+    if (tv) populate_patient_treeview(tv);
+    refresh_appointment_list();
+}
+
 static void create_header(void) {
     GtkWidget *hb = gtk_header_bar_new();
     gtk_header_bar_set_title(GTK_HEADER_BAR(hb), APP_NAME);
     gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(hb), TRUE);
-    gchar *ut = g_strdup_printf("%s | %s", current_username, current_role);
-    GtkWidget *ul = gtk_label_new(ut);
-    g_free(ut);
+
+    GtkWidget *undo_btn = gtk_button_new_from_icon_name("edit-undo-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_widget_set_tooltip_text(undo_btn, "Undo (Ctrl+Z)");
+    g_signal_connect(undo_btn, "clicked", G_CALLBACK(on_undo), NULL);
+    gtk_header_bar_pack_start(GTK_HEADER_BAR(hb), undo_btn);
+
+    GtkWidget *redo_btn = gtk_button_new_from_icon_name("edit-redo-symbolic", GTK_ICON_SIZE_BUTTON);
+    gtk_widget_set_tooltip_text(redo_btn, "Redo (Ctrl+Y)");
+    g_signal_connect(redo_btn, "clicked", G_CALLBACK(on_redo), NULL);
+    gtk_header_bar_pack_start(GTK_HEADER_BAR(hb), redo_btn);
+
+    GtkWidget *ul = gtk_label_new(current_username);
     gtk_header_bar_pack_end(GTK_HEADER_BAR(hb), ul);
     GtkWidget *lo = gtk_button_new_from_icon_name("system-shutdown-symbolic", GTK_ICON_SIZE_BUTTON);
     gtk_widget_set_tooltip_text(lo, "Logout");
@@ -478,9 +531,8 @@ static void on_quick_action_clicked(GtkButton *btn, gpointer data) {
     const char *vn = g_object_get_data(G_OBJECT(btn), "qa-view");
     if (vn) {
         GtkWidget *tv = g_object_get_data(G_OBJECT(content_stack), "patient-treeview");
-        GtkWidget *al = g_object_get_data(G_OBJECT(content_stack), "appointments-list");
         if (strcmp(vn, "patients") == 0 && tv) populate_patient_treeview(tv);
-        if (strcmp(vn, "appointments") == 0 && al) populate_appointment_list(al, NULL);
+        if (strcmp(vn, "appointments") == 0) refresh_appointment_list();
         if (strcmp(vn, "queue") == 0) update_queue_display();
         if (strcmp(vn, "dashboard") == 0) update_dashboard_stats();
         switch_to_view(vn);
@@ -866,18 +918,35 @@ void populate_appointment_list(GtkWidget *list, const char *date) {
     char td[15]; snprintf(td, 15, "%02d/%02d/%04d", ltm->tm_mday, ltm->tm_mon+1, ltm->tm_year+1900);
     if (!date) date = td;
 
+    int show_scheduled = 1, show_completed = 1, show_cancelled = 1;
+    GtkWidget *fs = g_object_get_data(G_OBJECT(content_stack), "filter-scheduled");
+    GtkWidget *fc = g_object_get_data(G_OBJECT(content_stack), "filter-completed");
+    GtkWidget *fca = g_object_get_data(G_OBJECT(content_stack), "filter-cancelled");
+    if (fs) show_scheduled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(fs));
+    if (fc) show_completed = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(fc));
+    if (fca) show_cancelled = gtk_toggle_button_get_active(GTK_TOGGLE_BUTTON(fca));
+
     Appointment *cur = appointmentList;
     int found = 0;
     while (cur) {
-        if (strcmp(cur->date, date) == 0) {
+        int status_match = 1;
+        if (strcmp(cur->status, "Scheduled") == 0 && !show_scheduled) status_match = 0;
+        if (strcmp(cur->status, "Completed") == 0 && !show_completed) status_match = 0;
+        if (strcmp(cur->status, "Cancelled") == 0 && !show_cancelled) status_match = 0;
+
+        if (strcmp(cur->date, date) == 0 && status_match) {
             found = 1;
             GtkWidget *row = gtk_list_box_row_new();
-            GtkWidget *rb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
-            gtk_widget_set_margin_start(rb, 16); gtk_widget_set_margin_end(rb, 16);
-            gtk_widget_set_margin_top(rb, 12); gtk_widget_set_margin_bottom(rb, 12);
+            GtkWidget *vb = gtk_box_new(GTK_ORIENTATION_VERTICAL, 6);
+            gtk_widget_set_margin_start(vb, 16); gtk_widget_set_margin_end(vb, 16);
+            gtk_widget_set_margin_top(vb, 8); gtk_widget_set_margin_bottom(vb, 8);
 
-            gchar *txt = g_strdup_printf("<b>%s</b>  %s  |  %s", cur->time, cur->patientID, cur->doctorName);
+            GtkWidget *rb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 12);
+
             GtkWidget *dl = gtk_label_new(NULL);
+            Patient *apt_p = findPatientByID(cur->patientID);
+            const char *pname = apt_p ? apt_p->name : cur->patientID;
+            gchar *txt = g_strdup_printf("<b>%s</b>  %s (%s)  |  %s", cur->time, pname, cur->patientID, cur->doctorName);
             gtk_label_set_markup(GTK_LABEL(dl), txt); g_free(txt);
             gtk_widget_set_halign(dl, GTK_ALIGN_START);
             gtk_box_pack_start(GTK_BOX(rb), dl, TRUE, TRUE, 0);
@@ -888,8 +957,32 @@ void populate_appointment_list(GtkWidget *list, const char *date) {
             else if (strcmp(cur->status, "Cancelled") == 0) bt = "danger";
             GtkWidget *bg = badge(cur->status, bt);
             gtk_box_pack_end(GTK_BOX(rb), bg, FALSE, FALSE, 0);
+            gtk_box_pack_start(GTK_BOX(vb), rb, FALSE, FALSE, 0);
 
-            gtk_container_add(GTK_CONTAINER(row), rb);
+            if (strcmp(cur->status, "Scheduled") == 0) {
+                GtkWidget *ab = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 6);
+                gtk_widget_set_halign(ab, GTK_ALIGN_END);
+
+                GtkWidget *complete_btn = gtk_button_new_with_label("Complete");
+                gtk_style_context_add_class(gtk_widget_get_style_context(complete_btn), "success");
+                g_signal_connect(complete_btn, "clicked", G_CALLBACK(on_apt_complete), g_strdup(cur->appointmentID));
+                gtk_box_pack_start(GTK_BOX(ab), complete_btn, FALSE, FALSE, 0);
+
+                GtkWidget *cancel_btn = gtk_button_new_with_label("Cancel");
+                gtk_style_context_add_class(gtk_widget_get_style_context(cancel_btn), "danger");
+                g_signal_connect(cancel_btn, "clicked", G_CALLBACK(on_apt_cancel), g_strdup(cur->appointmentID));
+                gtk_box_pack_start(GTK_BOX(ab), cancel_btn, FALSE, FALSE, 0);
+
+                gtk_box_pack_start(GTK_BOX(vb), ab, FALSE, FALSE, 0);
+            } else if (strcmp(cur->status, "Completed") == 0) {
+                GtkWidget *mc_btn = gtk_button_new_with_label("Generate MC");
+                gtk_style_context_add_class(gtk_widget_get_style_context(mc_btn), "primary");
+                g_signal_connect(mc_btn, "clicked", G_CALLBACK(on_apt_generate_mc), g_strdup(cur->appointmentID));
+                gtk_widget_set_halign(mc_btn, GTK_ALIGN_END);
+                gtk_box_pack_start(GTK_BOX(vb), mc_btn, FALSE, FALSE, 0);
+            }
+
+            gtk_container_add(GTK_CONTAINER(row), vb);
             gtk_list_box_insert(GTK_LIST_BOX(list), row, -1);
         }
         cur = cur->next;
@@ -926,9 +1019,12 @@ GtkWidget* create_appointment_list_view(void) {
     gtk_widget_set_margin_top(fb, 12); gtk_widget_set_margin_bottom(fb, 12);
     gtk_container_add(GTK_CONTAINER(fc), fb);
     const char *sts[] = {"Scheduled", "Completed", "Cancelled"};
+    const char *fkeys[] = {"filter-scheduled", "filter-completed", "filter-cancelled"};
     for (int i = 0; i < 3; i++) {
         GtkWidget *chk = gtk_check_button_new_with_label(sts[i]);
         gtk_toggle_button_set_active(GTK_TOGGLE_BUTTON(chk), TRUE);
+        g_signal_connect_swapped(chk, "toggled", G_CALLBACK(refresh_appointment_list), NULL);
+        g_object_set_data(G_OBJECT(content_stack), fkeys[i], chk);
         gtk_box_pack_start(GTK_BOX(fb), chk, FALSE, FALSE, 0);
     }
 
@@ -952,6 +1048,7 @@ GtkWidget* create_appointment_list_view(void) {
     gtk_list_box_set_selection_mode(GTK_LIST_BOX(al), GTK_SELECTION_SINGLE);
     gtk_container_add(GTK_CONTAINER(list_sc), al);
     g_object_set_data(G_OBJECT(content_stack), "appointments-list", al);
+    g_object_set_data(G_OBJECT(content_stack), "appointments-calendar", cal);
 
     GtkWidget *card = create_card(NULL);
     gtk_container_add(GTK_CONTAINER(card), list_sc);
@@ -962,17 +1059,208 @@ GtkWidget* create_appointment_list_view(void) {
     return paned;
 }
 
-void on_calendar_changed(GtkCalendar *cal, gpointer data) {
+static char last_appointment_date[15] = "";
+
+static void get_calendar_date(GtkCalendar *cal, char *out) {
     guint y, m, d;
     gtk_calendar_get_date(cal, &y, &m, &d);
     m++;
-    char date[15]; snprintf(date, 15, "%02u/%02u/%04u", d, m, y);
+    snprintf(out, 15, "%02u/%02u/%04u", d, m, y);
+}
+
+static void refresh_appointment_list(void) {
+    GtkWidget *al = g_object_get_data(G_OBJECT(content_stack), "appointments-list");
+    if (!al) return;
+    if (strlen(last_appointment_date) > 0) {
+        populate_appointment_list(al, last_appointment_date);
+    } else {
+        populate_appointment_list(al, NULL);
+    }
+}
+
+void on_calendar_changed(GtkCalendar *cal, gpointer data) {
+    char date[15];
+    get_calendar_date(cal, date);
+    strncpy(last_appointment_date, date, 14);
     populate_appointment_list(GTK_WIDGET(data), date);
 }
 
 void on_appointment_book(GtkButton *btn, gpointer data) {
     (void)btn; (void)data;
     switch_to_view("appointment-form");
+}
+
+static void do_generate_mc(const char *apt_id) {
+    Appointment *a = findAppointmentByID(apt_id);
+    if (!a) { show_notification("Appointment not found!", "error"); return; }
+    if (strcmp(a->status, "Completed") != 0) {
+        show_notification("Appointment must be completed first!", "warning"); return;
+    }
+    Patient *p = findPatientByID(a->patientID);
+    if (!p) { show_notification("Patient not found!", "error"); return; }
+
+    GString *mc = g_string_new("");
+    g_string_append_printf(mc, "═══════════════════════════════════════════════════════════\n");
+    g_string_append_printf(mc, "          PUSAT KESIHATAN UNIVERSITI UTHM\n");
+    g_string_append_printf(mc, "              MEDICAL CERTIFICATE\n");
+    g_string_append_printf(mc, "═══════════════════════════════════════════════════════════\n\n");
+    g_string_append_printf(mc, "Date Issued: %s\n\n", getCurrentTimestamp());
+    g_string_append_printf(mc, "This is to certify that:\n\n");
+    g_string_append_printf(mc, "  Name:            %s\n", p->name);
+    g_string_append_printf(mc, "  IC Number:       %s\n", p->icNumber);
+    g_string_append_printf(mc, "  Patient ID:      %s\n", p->patientID);
+    g_string_append_printf(mc, "  Faculty/Program: %s / %s\n\n", p->faculty, p->program);
+    g_string_append_printf(mc, "was examined at Pusat Kesihatan Universiti UTHM on %s.\n\n", a->date);
+    g_string_append_printf(mc, "  Diagnosis:  %s\n", a->diagnosis);
+    g_string_append_printf(mc, "  Prescription: %s\n", a->prescription);
+    g_string_append_printf(mc, "  Remarks:    %s\n\n", a->remarks);
+    g_string_append_printf(mc, "  Doctor:     %s\n", a->doctorName);
+    g_string_append_printf(mc, "  Department: %s\n\n", a->department);
+    g_string_append_printf(mc, "═══════════════════════════════════════════════════════════\n");
+    g_string_append_printf(mc, "  Generated: %s\n", getCurrentTimestamp());
+    g_string_append_printf(mc, "═══════════════════════════════════════════════════════════\n");
+
+    mkdir("data/mc", 0755);
+    char mcFile[100];
+    snprintf(mcFile, sizeof(mcFile), "data/mc/MC_%s.txt", apt_id);
+    FILE *f = fopen(mcFile, "w");
+    if (f) { fprintf(f, "%s", mc->str); fclose(f); }
+
+    appendAuditLog("GENERATE_MC", apt_id, "SUCCESS");
+
+    GtkWidget *d = gtk_dialog_new_with_buttons("Medical Certificate",
+        GTK_WINDOW(main_window), GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+        "Close", GTK_RESPONSE_CLOSE, NULL);
+    gtk_window_set_default_size(GTK_WINDOW(d), 500, 450);
+    GtkWidget *c = gtk_dialog_get_content_area(GTK_DIALOG(d));
+    GtkWidget *tv = gtk_text_view_new();
+    gtk_text_view_set_editable(GTK_TEXT_VIEW(tv), FALSE);
+    gtk_text_view_set_monospace(GTK_TEXT_VIEW(tv), TRUE);
+    gtk_text_view_set_wrap_mode(GTK_TEXT_VIEW(tv), GTK_WRAP_WORD);
+    GtkWidget *sw = gtk_scrolled_window_new(NULL, NULL);
+    gtk_container_add(GTK_CONTAINER(sw), tv);
+    gtk_box_pack_start(GTK_BOX(c), sw, TRUE, TRUE, 0);
+    GtkTextBuffer *buf = gtk_text_view_get_buffer(GTK_TEXT_VIEW(tv));
+    gtk_text_buffer_set_text(buf, mc->str, -1);
+    g_string_free(mc, TRUE);
+    gtk_widget_show_all(d);
+    gtk_dialog_run(GTK_DIALOG(d));
+    gtk_widget_destroy(d);
+}
+
+static void on_apt_complete_confirm(GtkDialog *dialog, gint resp, gpointer data) {
+    (void)data;
+    if (resp == GTK_RESPONSE_ACCEPT) {
+        const char *apt_id = g_object_get_data(G_OBJECT(dialog), "apt-id");
+        GtkWidget *diag_e = g_object_get_data(G_OBJECT(dialog), "diag-entry");
+        GtkWidget *presc_e = g_object_get_data(G_OBJECT(dialog), "presc-entry");
+        GtkWidget *rem_e = g_object_get_data(G_OBJECT(dialog), "rem-entry");
+
+        Appointment *a = findAppointmentByID(apt_id);
+        if (!a) { show_notification("Appointment not found!", "error"); return; }
+        if (strcmp(a->status, "Scheduled") != 0) {
+            show_notification("Appointment is not in Scheduled status!", "warning"); return;
+        }
+
+        const char *diag = gtk_entry_get_text(GTK_ENTRY(diag_e));
+        const char *presc = gtk_entry_get_text(GTK_ENTRY(presc_e));
+        const char *rem = gtk_entry_get_text(GTK_ENTRY(rem_e));
+
+        if (strlen(diag) > 0) strncpy(a->diagnosis, diag, MAX_DIAGNOSIS - 1);
+        else strcpy(a->diagnosis, "Consultation completed");
+        if (strlen(presc) > 0) strncpy(a->prescription, presc, MAX_PRESCRIPTION - 1);
+        else strcpy(a->prescription, "None");
+        if (strlen(rem) > 0) strncpy(a->remarks, rem, MAX_REMARKS - 1);
+        else strcpy(a->remarks, "None");
+        strcpy(a->status, "Completed");
+        saveAppointments();
+        appendAuditLog("COMPLETE_APPOINTMENT", apt_id, "SUCCESS");
+
+        show_notification("Appointment completed!", "success");
+        strncpy(last_appointment_date, a->date, 14);
+        GtkWidget *al = g_object_get_data(G_OBJECT(content_stack), "appointments-list");
+        if (al) populate_appointment_list(al, a->date);
+
+        GtkWidget *mc_dialog = gtk_message_dialog_new(
+            GTK_WINDOW(main_window), GTK_DIALOG_MODAL | GTK_DIALOG_DESTROY_WITH_PARENT,
+            GTK_MESSAGE_QUESTION, GTK_BUTTONS_YES_NO,
+            "Generate Medical Certificate for this appointment?");
+        gtk_window_set_title(GTK_WINDOW(mc_dialog), "Generate MC");
+        if (gtk_dialog_run(GTK_DIALOG(mc_dialog)) == GTK_RESPONSE_YES) {
+            do_generate_mc(apt_id);
+        }
+        gtk_widget_destroy(mc_dialog);
+    }
+    gtk_widget_destroy(GTK_WIDGET(dialog));
+}
+
+static void on_apt_complete(GtkButton *btn, gpointer data) {
+    (void)btn;
+    const char *apt_id = (const char *)data;
+    Appointment *a = findAppointmentByID(apt_id);
+    if (!a) { show_notification("Appointment not found!", "error"); return; }
+    if (strcmp(a->status, "Scheduled") != 0) {
+        show_notification("Only Scheduled appointments can be completed.", "warning"); return;
+    }
+
+    GtkWidget *d = gtk_dialog_new_with_buttons("Complete Appointment",
+        GTK_WINDOW(main_window), GTK_DIALOG_MODAL,
+        "Complete", GTK_RESPONSE_ACCEPT, "Cancel", GTK_RESPONSE_REJECT, NULL);
+    gtk_window_set_default_size(GTK_WINDOW(d), 450, 300);
+
+    GtkWidget *c = gtk_dialog_get_content_area(GTK_DIALOG(d));
+    gtk_box_set_spacing(GTK_BOX(c), 8);
+    gtk_container_set_border_width(GTK_CONTAINER(c), 16);
+
+    GtkWidget *info = gtk_label_new(NULL);
+    gchar *info_txt = g_strdup_printf("<b>Appointment:</b> %s\n<b>Patient:</b> %s\n<b>Doctor:</b> %s",
+        apt_id, a->patientID, a->doctorName);
+    gtk_label_set_markup(GTK_LABEL(info), info_txt);
+    g_free(info_txt);
+    gtk_box_pack_start(GTK_BOX(c), info, FALSE, FALSE, 0);
+
+    GtkWidget *diag_e = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(diag_e), "Diagnosis *");
+    gtk_box_pack_start(GTK_BOX(c), form_row("Diagnosis", diag_e), FALSE, FALSE, 0);
+
+    GtkWidget *presc_e = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(presc_e), "Prescription");
+    gtk_box_pack_start(GTK_BOX(c), form_row("Prescription", presc_e), FALSE, FALSE, 0);
+
+    GtkWidget *rem_e = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(rem_e), "Remarks");
+    gtk_box_pack_start(GTK_BOX(c), form_row("Remarks", rem_e), FALSE, FALSE, 0);
+
+    g_object_set_data_full(G_OBJECT(d), "apt-id", g_strdup(apt_id), g_free);
+    g_object_set_data(G_OBJECT(d), "diag-entry", diag_e);
+    g_object_set_data(G_OBJECT(d), "presc-entry", presc_e);
+    g_object_set_data(G_OBJECT(d), "rem-entry", rem_e);
+
+    g_signal_connect(d, "response", G_CALLBACK(on_apt_complete_confirm), NULL);
+    gtk_widget_show_all(d);
+}
+
+static void on_apt_generate_mc(GtkButton *btn, gpointer data) {
+    (void)btn;
+    const char *apt_id = (const char *)data;
+    do_generate_mc(apt_id);
+}
+
+static void on_apt_cancel(GtkButton *btn, gpointer data) {
+    (void)btn;
+    const char *apt_id = (const char *)data;
+    Appointment *a = findAppointmentByID(apt_id);
+    if (!a) { show_notification("Appointment not found!", "error"); return; }
+    if (strcmp(a->status, "Completed") == 0) {
+        show_notification("Cannot cancel a completed appointment.", "warning"); return;
+    }
+    strcpy(a->status, "Cancelled");
+    saveAppointments();
+    appendAuditLog("CANCEL_APPOINTMENT", apt_id, "SUCCESS");
+    show_notification("Appointment cancelled.", "success");
+    strncpy(last_appointment_date, a->date, 14);
+    GtkWidget *al = g_object_get_data(G_OBJECT(content_stack), "appointments-list");
+    if (al) populate_appointment_list(al, a->date);
 }
 
 /* ==================== APPOINTMENT FORM VIEW ==================== */
@@ -1135,10 +1423,12 @@ void on_appointment_save(GtkButton *btn, gpointer data) {
     else strcpy(a->symptoms, "Not specified");
     g_free(sym);
 
+    if (strlen(a->remarks) == 0) strcpy(a->remarks, "N/A");
     insertAppointmentToList(a);
     appendAuditLog("INSERT_APPOINTMENT", a->appointmentID, "SUCCESS");
     saveAppointments();
     show_notification("Appointment booked!", "success");
+    strncpy(last_appointment_date, a->date, 14);
     GtkWidget *al = g_object_get_data(G_OBJECT(content_stack), "appointments-list");
     if (al) populate_appointment_list(al, a->date);
     switch_to_view("appointments");
@@ -1373,6 +1663,28 @@ void on_queue_next(GtkButton *btn, gpointer data) {
 
 /* ==================== REPORTS VIEW ==================== */
 
+static void update_report_stats(void) {
+    if (!content_stack) return;
+    int totalA = 0, completed = 0, cancelled = 0, noshow = 0;
+    Appointment *cur = appointmentList;
+    while (cur) {
+        totalA++;
+        if (strcmp(cur->status, "Completed") == 0) completed++;
+        else if (strcmp(cur->status, "Cancelled") == 0) cancelled++;
+        else if (strcmp(cur->status, "No-Show") == 0) noshow++;
+        cur = cur->next;
+    }
+    set_stat(g_object_get_data(G_OBJECT(content_stack), "rep-total-apts"), totalA);
+    set_stat(g_object_get_data(G_OBJECT(content_stack), "rep-completed-apts"), completed);
+    set_stat(g_object_get_data(G_OBJECT(content_stack), "rep-cancelled-apts"), cancelled);
+    if (totalA > 0) {
+        int noshow_pct = (noshow * 100) / totalA;
+        set_stat(g_object_get_data(G_OBJECT(content_stack), "rep-noshow-rate"), noshow_pct);
+    }
+    GtkWidget *da = g_object_get_data(G_OBJECT(content_stack), "rep-chart");
+    if (da) gtk_widget_queue_draw(da);
+}
+
 GtkWidget* create_report_view(void) {
     GtkWidget *sc = gtk_scrolled_window_new(NULL, NULL);
     gtk_scrolled_window_set_policy(GTK_SCROLLED_WINDOW(sc), GTK_POLICY_NEVER, GTK_POLICY_AUTOMATIC);
@@ -1385,6 +1697,10 @@ GtkWidget* create_report_view(void) {
     GtkWidget *tl = gtk_label_new("Reports & Analytics");
     gtk_style_context_add_class(gtk_widget_get_style_context(tl), "card-title");
     gtk_box_pack_start(GTK_BOX(hb), tl, TRUE, TRUE, 0);
+    GtkWidget *refresh_btn = gtk_button_new_from_icon_name("view-refresh", GTK_ICON_SIZE_BUTTON);
+    gtk_widget_set_tooltip_text(refresh_btn, "Refresh Reports");
+    g_signal_connect_swapped(refresh_btn, "clicked", G_CALLBACK(update_report_stats), NULL);
+    gtk_box_pack_end(GTK_BOX(hb), refresh_btn, FALSE, FALSE, 0);
     gtk_box_pack_start(GTK_BOX(box), hb, FALSE, FALSE, 0);
 
     GtkWidget *grid = gtk_grid_new();
@@ -1393,10 +1709,18 @@ GtkWidget* create_report_view(void) {
     gtk_grid_set_column_homogeneous(GTK_GRID(grid), TRUE);
     gtk_box_pack_start(GTK_BOX(box), grid, FALSE, FALSE, 0);
 
-    set_stat(stat_card("Total Appointments", "office-calendar", "blue"), 0);
-    set_stat(stat_card("Avg Wait Time", "clock", "teal"), 15);
-    set_stat(stat_card("No-Show Rate", "dialog-warning", "amber"), 5);
-    set_stat(stat_card("Satisfaction", "emblem-favorite", "green"), 92);
+    GtkWidget *s1 = stat_card("Total Appointments", "office-calendar", "blue");
+    GtkWidget *s2 = stat_card("Completed", "emblem-ok", "green");
+    GtkWidget *s3 = stat_card("Cancelled", "dialog-warning", "amber");
+    GtkWidget *s4 = stat_card("No-Show %", "dialog-error", "danger");
+    g_object_set_data(G_OBJECT(content_stack), "rep-total-apts", s1);
+    g_object_set_data(G_OBJECT(content_stack), "rep-completed-apts", s2);
+    g_object_set_data(G_OBJECT(content_stack), "rep-cancelled-apts", s3);
+    g_object_set_data(G_OBJECT(content_stack), "rep-noshow-rate", s4);
+    gtk_grid_attach(GTK_GRID(grid), s1, 0, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), s2, 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), s3, 2, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), s4, 3, 0, 1, 1);
 
     GtkWidget *dep = create_card("Department Distribution");
     gtk_box_pack_start(GTK_BOX(box), dep, TRUE, TRUE, 0);
@@ -1404,6 +1728,9 @@ GtkWidget* create_report_view(void) {
     gtk_widget_set_size_request(da, -1, 200);
     g_signal_connect(da, "draw", G_CALLBACK(draw_chart), NULL);
     gtk_container_add(GTK_CONTAINER(dep), da);
+    g_object_set_data(G_OBJECT(content_stack), "rep-chart", da);
+
+    update_report_stats();
 
     return sc;
 }
@@ -1415,22 +1742,55 @@ gboolean draw_chart(GtkWidget *w, cairo_t *cr, gpointer data) {
     cairo_set_source_rgb(cr, 0.97, 0.97, 0.97);
     cairo_paint(cr);
 
-    int vals[] = {45, 72, 38, 91, 56};
-    const char *lbls[] = {"General", "Dental", "Mental", "Physio", "Other"};
-    int n = 5, bw = (W - 80) / n;
+    if (W < 100 || H < 50) return FALSE;
 
-    for (int i = 0; i < n; i++) {
-        int bh = (vals[i] * (H - 60)) / 100;
+    const char *depts[] = {"General", "Dental", "Mental Health", "Physiotherapy"};
+    int nd = 4;
+    int counts[4] = {0, 0, 0, 0};
+    int maxVal = 0;
+
+    Appointment *cur = appointmentList;
+    while (cur) {
+        for (int i = 0; i < nd; i++) {
+            if (strcmp(cur->department, depts[i]) == 0) {
+                counts[i]++;
+                if (counts[i] > maxVal) maxVal = counts[i];
+                break;
+            }
+        }
+        cur = cur->next;
+    }
+
+    if (maxVal == 0) {
+        cairo_set_source_rgb(cr, 0.5, 0.5, 0.5);
+        cairo_set_font_size(cr, 14);
+        cairo_move_to(cr, W / 2 - 60, H / 2);
+        cairo_show_text(cr, "No appointment data");
+        return FALSE;
+    }
+
+    int bw = (W - 80) / nd;
+    double clrs[][3] = {{0,0.4,0.8},{0,0.64,0.64},{1,0.42,0.21},{0.16,0.79,0.59}};
+
+    for (int i = 0; i < nd; i++) {
+        int bh = (counts[i] * (H - 60)) / maxVal;
+        if (bh < 4 && counts[i] > 0) bh = 4;
         int x = 40 + i * bw + bw / 4;
         int y = H - 30 - bh;
-        double clrs[][3] = {{0,0.4,0.8},{0,0.64,0.64},{1,0.42,0.21},{0.16,0.79,0.59},{0.6,0.6,0.6}};
         cairo_set_source_rgb(cr, clrs[i][0], clrs[i][1], clrs[i][2]);
         cairo_rectangle(cr, x, y, bw / 2, bh);
         cairo_fill(cr);
+
         cairo_set_source_rgb(cr, 0.2, 0.2, 0.2);
+        cairo_set_font_size(cr, 9);
+        cairo_move_to(cr, x + bw / 4 - 12, H - 14);
+        cairo_show_text(cr, depts[i]);
+
+        char val_str[10];
+        snprintf(val_str, 10, "%d", counts[i]);
         cairo_set_font_size(cr, 10);
-        cairo_move_to(cr, x + bw / 4 - 10, H - 12);
-        cairo_show_text(cr, lbls[i]);
+        cairo_move_to(cr, x + bw / 4 - 6, y - 4);
+        cairo_show_text(cr, val_str);
     }
     return FALSE;
 }
@@ -1456,25 +1816,31 @@ GtkWidget* create_search_view(void) {
     gtk_box_pack_start(GTK_BOX(sb), grid, FALSE, FALSE, 0);
 
     GtkWidget *id_e = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(id_e), "Patient ID...");
+    GtkWidget *apt_e = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(apt_e), "Appointment ID...");
     GtkWidget *nm_e = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(nm_e), "Name...");
-    GtkWidget *dt_e = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(dt_e), "Date (DD/MM/YYYY)");
+    GtkWidget *sd_e = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(sd_e), "Start Date (DD/MM/YYYY)");
+    GtkWidget *ed_e = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(ed_e), "End Date (DD/MM/YYYY)");
     GtkWidget *dc = gtk_combo_box_text_new();
     gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(dc), "All Departments");
     const char *deps[] = {"General","Dental","Mental Health","Physiotherapy",NULL};
     for (int i = 0; deps[i]; i++) gtk_combo_box_text_append_text(GTK_COMBO_BOX_TEXT(dc), deps[i]);
 
     gtk_grid_attach(GTK_GRID(grid), form_row("Patient ID", id_e), 0, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), form_row("Name", nm_e), 1, 0, 1, 1);
-    gtk_grid_attach(GTK_GRID(grid), form_row("Date", dt_e), 0, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), form_row("Appointment ID", apt_e), 1, 0, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), form_row("Name", nm_e), 0, 1, 1, 1);
     gtk_grid_attach(GTK_GRID(grid), form_row("Department", dc), 1, 1, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), form_row("Start Date", sd_e), 0, 2, 1, 1);
+    gtk_grid_attach(GTK_GRID(grid), form_row("End Date", ed_e), 1, 2, 1, 1);
 
     GtkWidget *sh = gtk_button_new_with_label("Search");
     gtk_style_context_add_class(gtk_widget_get_style_context(sh), "primary");
     gtk_widget_set_halign(sh, GTK_ALIGN_END);
     gtk_box_pack_start(GTK_BOX(sb), sh, FALSE, FALSE, 0);
     g_object_set_data(G_OBJECT(content_stack), "search-id", id_e);
+    g_object_set_data(G_OBJECT(content_stack), "search-apt-id", apt_e);
     g_object_set_data(G_OBJECT(content_stack), "search-name", nm_e);
-    g_object_set_data(G_OBJECT(content_stack), "search-date", dt_e);
+    g_object_set_data(G_OBJECT(content_stack), "search-start-date", sd_e);
+    g_object_set_data(G_OBJECT(content_stack), "search-end-date", ed_e);
     g_object_set_data(G_OBJECT(content_stack), "search-dept", dc);
     g_signal_connect(sh, "clicked", G_CALLBACK(on_search_execute), NULL);
 
@@ -1492,13 +1858,35 @@ GtkWidget* create_search_view(void) {
 void on_search_execute(GtkButton *btn, gpointer data) {
     (void)btn; (void)data;
     const char *id = gtk_entry_get_text(GTK_ENTRY(g_object_get_data(G_OBJECT(content_stack), "search-id")));
+    const char *apt_id = gtk_entry_get_text(GTK_ENTRY(g_object_get_data(G_OBJECT(content_stack), "search-apt-id")));
     const char *nm = gtk_entry_get_text(GTK_ENTRY(g_object_get_data(G_OBJECT(content_stack), "search-name")));
-    const char *dt = gtk_entry_get_text(GTK_ENTRY(g_object_get_data(G_OBJECT(content_stack), "search-date")));
+    const char *sd = gtk_entry_get_text(GTK_ENTRY(g_object_get_data(G_OBJECT(content_stack), "search-start-date")));
+    const char *ed = gtk_entry_get_text(GTK_ENTRY(g_object_get_data(G_OBJECT(content_stack), "search-end-date")));
 
     GtkWidget *rl = g_object_get_data(G_OBJECT(content_stack), "search-results");
     if (!rl) return;
     GList *ch = gtk_container_get_children(GTK_CONTAINER(rl));
     g_list_free_full(ch, (GDestroyNotify)gtk_widget_destroy);
+
+    int has_results = 0;
+
+    if (strlen(apt_id) > 0) {
+        Appointment *a = findAppointmentByID(apt_id);
+        if (a) {
+            has_results = 1;
+            GtkWidget *row = gtk_list_box_row_new();
+            GtkWidget *rb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+            gtk_widget_set_margin_start(rb, 12); gtk_widget_set_margin_end(rb, 12);
+            gtk_widget_set_margin_top(rb, 8); gtk_widget_set_margin_bottom(rb, 8);
+            gchar *txt = g_strdup_printf("APT: %s | Patient: %s | %s %s | %s | %s",
+                a->appointmentID, a->patientID, a->date, a->time, a->doctorName, a->status);
+            GtkWidget *lb = gtk_label_new(txt);
+            g_free(txt);
+            gtk_box_pack_start(GTK_BOX(rb), lb, TRUE, TRUE, 0);
+            gtk_container_add(GTK_CONTAINER(row), rb);
+            gtk_list_box_insert(GTK_LIST_BOX(rl), row, -1);
+        }
+    }
 
     Patient *cur = patientList;
     while (cur) {
@@ -1506,6 +1894,7 @@ void on_search_execute(GtkButton *btn, gpointer data) {
         if (strlen(id) > 0 && strcmp(cur->patientID, id) != 0) match = 0;
         if (match && strlen(nm) > 0 && !strstr(cur->name, nm)) match = 0;
         if (match) {
+            has_results = 1;
             GtkWidget *row = gtk_list_box_row_new();
             GtkWidget *rb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
             gtk_widget_set_margin_start(rb, 12); gtk_widget_set_margin_end(rb, 12);
@@ -1520,26 +1909,42 @@ void on_search_execute(GtkButton *btn, gpointer data) {
         cur = cur->next;
     }
 
-    Appointment *acur = appointmentList;
-    while (acur) {
-        int match = 1;
-        if (strlen(id) > 0 && strcmp(acur->patientID, id) != 0) match = 0;
-        if (match && strlen(dt) > 0 && strcmp(acur->date, dt) != 0) match = 0;
-        if (match) {
-            GtkWidget *row = gtk_list_box_row_new();
-            GtkWidget *rb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
-            gtk_widget_set_margin_start(rb, 12); gtk_widget_set_margin_end(rb, 12);
-            gtk_widget_set_margin_top(rb, 8); gtk_widget_set_margin_bottom(rb, 8);
-            gchar *txt = g_strdup_printf("APT: %s | %s | %s | %s", acur->appointmentID, acur->patientID, acur->date, acur->status);
-            GtkWidget *lb = gtk_label_new(txt);
-            g_free(txt);
-            gtk_box_pack_start(GTK_BOX(rb), lb, TRUE, TRUE, 0);
-            gtk_container_add(GTK_CONTAINER(row), rb);
-            gtk_list_box_insert(GTK_LIST_BOX(rl), row, -1);
+    if (strlen(apt_id) == 0) {
+        Appointment *acur = appointmentList;
+        while (acur) {
+            int match = 1;
+            if (strlen(id) > 0 && strcmp(acur->patientID, id) != 0) match = 0;
+            if (match && strlen(sd) > 0 && strlen(ed) > 0) {
+                if (dateCompare(acur->date, sd) < 0 || dateCompare(acur->date, ed) > 0) match = 0;
+            } else if (match && strlen(sd) > 0) {
+                if (strcmp(acur->date, sd) != 0) match = 0;
+            }
+            if (match) {
+                has_results = 1;
+                GtkWidget *row = gtk_list_box_row_new();
+                GtkWidget *rb = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 10);
+                gtk_widget_set_margin_start(rb, 12); gtk_widget_set_margin_end(rb, 12);
+                gtk_widget_set_margin_top(rb, 8); gtk_widget_set_margin_bottom(rb, 8);
+                gchar *txt = g_strdup_printf("APT: %s | %s | %s %s | %s | %s",
+                    acur->appointmentID, acur->patientID, acur->date, acur->time, acur->doctorName, acur->status);
+                GtkWidget *lb = gtk_label_new(txt);
+                g_free(txt);
+                gtk_box_pack_start(GTK_BOX(rb), lb, TRUE, TRUE, 0);
+                gtk_container_add(GTK_CONTAINER(row), rb);
+                gtk_list_box_insert(GTK_LIST_BOX(rl), row, -1);
+            }
+            acur = acur->next;
         }
-        acur = acur->next;
     }
 
+    if (!has_results) {
+        GtkWidget *row = gtk_list_box_row_new();
+        GtkWidget *lb = gtk_label_new("No results found.");
+        gtk_widget_set_margin_start(lb, 12); gtk_widget_set_margin_end(lb, 12);
+        gtk_widget_set_margin_top(lb, 8); gtk_widget_set_margin_bottom(lb, 8);
+        gtk_container_add(GTK_CONTAINER(row), lb);
+        gtk_list_box_insert(GTK_LIST_BOX(rl), row, -1);
+    }
     gtk_widget_show_all(rl);
     update_status("Search complete.");
 }
@@ -1567,6 +1972,10 @@ GtkWidget* create_settings_view(void) {
     gtk_style_context_add_class(gtk_widget_get_style_context(mu), "primary");
     g_signal_connect(mu, "clicked", G_CALLBACK(on_manage_users), NULL);
     gtk_box_pack_start(GTK_BOX(ub), mu, FALSE, FALSE, 0);
+    GtkWidget *cp = gtk_button_new_with_label("Change Password");
+    gtk_style_context_add_class(gtk_widget_get_style_context(cp), "warning");
+    g_signal_connect(cp, "clicked", G_CALLBACK(on_change_password), NULL);
+    gtk_box_pack_start(GTK_BOX(ub), cp, FALSE, FALSE, 0);
 
     GtkWidget *dc = create_card("Data Management");
     gtk_box_pack_start(GTK_BOX(box), dc, FALSE, FALSE, 0);
@@ -1574,6 +1983,10 @@ GtkWidget* create_settings_view(void) {
     gtk_widget_set_margin_start(db, 16); gtk_widget_set_margin_end(db, 16);
     gtk_widget_set_margin_top(db, 12); gtk_widget_set_margin_bottom(db, 12);
     gtk_container_add(GTK_CONTAINER(dc), db);
+    GtkWidget *vs = gtk_button_new_with_label("Doctor Schedule");
+    gtk_style_context_add_class(gtk_widget_get_style_context(vs), "primary");
+    g_signal_connect(vs, "clicked", G_CALLBACK(on_view_schedule), NULL);
+    gtk_box_pack_start(GTK_BOX(db), vs, FALSE, FALSE, 0);
     GtkWidget *bkp = gtk_button_new_with_label("Backup Data");
     gtk_style_context_add_class(gtk_widget_get_style_context(bkp), "success");
     g_signal_connect(bkp, "clicked", G_CALLBACK(on_backup), NULL);
@@ -1606,6 +2019,86 @@ GtkWidget* create_settings_view(void) {
     }
 
     return box;
+}
+
+static void on_change_password(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    if (!currentUser) return;
+    GtkWidget *d = gtk_dialog_new_with_buttons("Change Password",
+        GTK_WINDOW(main_window), GTK_DIALOG_MODAL,
+        "Change", GTK_RESPONSE_ACCEPT, "Cancel", GTK_RESPONSE_REJECT, NULL);
+    GtkWidget *c = gtk_dialog_get_content_area(GTK_DIALOG(d));
+    gtk_box_set_spacing(GTK_BOX(c), 8);
+    gtk_container_set_border_width(GTK_CONTAINER(c), 16);
+
+    GtkWidget *old_e = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(old_e), "Current password");
+    gtk_entry_set_visibility(GTK_ENTRY(old_e), FALSE);
+    gtk_box_pack_start(GTK_BOX(c), form_row("Current Password", old_e), FALSE, FALSE, 0);
+
+    GtkWidget *new_e = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(new_e), "New password");
+    gtk_entry_set_visibility(GTK_ENTRY(new_e), FALSE);
+    gtk_box_pack_start(GTK_BOX(c), form_row("New Password", new_e), FALSE, FALSE, 0);
+
+    GtkWidget *cf_e = gtk_entry_new();
+    gtk_entry_set_placeholder_text(GTK_ENTRY(cf_e), "Confirm new password");
+    gtk_entry_set_visibility(GTK_ENTRY(cf_e), FALSE);
+    gtk_box_pack_start(GTK_BOX(c), form_row("Confirm Password", cf_e), FALSE, FALSE, 0);
+
+    gtk_widget_show_all(d);
+    if (gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_ACCEPT) {
+        const char *old_p = gtk_entry_get_text(GTK_ENTRY(old_e));
+        const char *new_p = gtk_entry_get_text(GTK_ENTRY(new_e));
+        const char *cf_p = gtk_entry_get_text(GTK_ENTRY(cf_e));
+
+        char hash[65]; sha256_string(old_p, hash);
+        if (strcmp(currentUser->password, hash) != 0) {
+            show_notification("Current password is incorrect!", "error");
+        } else if (strcmp(new_p, cf_p) != 0) {
+            show_notification("New passwords do not match!", "error");
+        } else if (strlen(new_p) < 4) {
+            show_notification("Password must be at least 4 characters.", "error");
+        } else {
+            sha256_string(new_p, currentUser->password);
+            saveUsers();
+            appendAuditLog("CHANGE_PASSWORD", currentUser->username, "SUCCESS");
+            show_notification("Password changed successfully!", "success");
+        }
+    }
+    gtk_widget_destroy(d);
+}
+
+static void on_view_schedule(GtkButton *btn, gpointer data) {
+    (void)btn; (void)data;
+    GtkWidget *d = gtk_dialog_new_with_buttons("Doctor Schedule",
+        GTK_WINDOW(main_window), GTK_DIALOG_MODAL, "Close", GTK_RESPONSE_CLOSE, NULL);
+    gtk_window_set_default_size(GTK_WINDOW(d), 700, 400);
+
+    GtkWidget *c = gtk_dialog_get_content_area(GTK_DIALOG(d));
+    GtkListStore *s = gtk_list_store_new(6, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+    Schedule *cur = scheduleList;
+    while (cur) {
+        GtkTreeIter it; gtk_list_store_append(s, &it);
+        gchar *cap = g_strdup_printf("%d/%d", cur->currentBookings, cur->maxPatientsPerDay);
+        gtk_list_store_set(s, &it, 0, cur->doctorName, 1, cur->department,
+            2, cur->availableDays, 3, cur->timeStart, 4, cur->timeEnd, 5, cap, -1);
+        g_free(cap);
+        cur = cur->next;
+    }
+    GtkWidget *tv = gtk_tree_view_new_with_model(GTK_TREE_MODEL(s));
+    gtk_tree_view_set_grid_lines(GTK_TREE_VIEW(tv), GTK_TREE_VIEW_GRID_LINES_HORIZONTAL);
+    const char *scols[] = {"Doctor", "Department", "Days", "Start", "End", "Booked/Max"};
+    for (int i = 0; i < 6; i++) {
+        GtkCellRenderer *r = gtk_cell_renderer_text_new();
+        gtk_tree_view_append_column(GTK_TREE_VIEW(tv), gtk_tree_view_column_new_with_attributes(scols[i], r, "text", i, NULL));
+    }
+    GtkWidget *sw = gtk_scrolled_window_new(NULL, NULL);
+    gtk_container_add(GTK_CONTAINER(sw), tv);
+    gtk_box_pack_start(GTK_BOX(c), sw, TRUE, TRUE, 0);
+    gtk_widget_show_all(d);
+    gtk_dialog_run(GTK_DIALOG(d));
+    gtk_widget_destroy(d);
 }
 
 void on_manage_users(GtkButton *btn, gpointer data) {

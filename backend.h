@@ -191,6 +191,7 @@ User* findUser(const char* username);
 int authenticate(const char* username, const char* password);
 int hasRole(const char* roles);
 
+void sha256_string(const char *str, char output[65]);
 void generateMC();
 void statisticsDashboard();
 void searchByDateRange();
