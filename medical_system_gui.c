@@ -515,8 +515,6 @@ static void create_header(void) {
     g_signal_connect(redo_btn, "clicked", G_CALLBACK(on_redo), NULL);
     gtk_header_bar_pack_start(GTK_HEADER_BAR(hb), redo_btn);
 
-    GtkWidget *ul = gtk_label_new(current_username);
-    gtk_header_bar_pack_end(GTK_HEADER_BAR(hb), ul);
     GtkWidget *lo = gtk_button_new_from_icon_name("system-shutdown-symbolic", GTK_ICON_SIZE_BUTTON);
     gtk_widget_set_tooltip_text(lo, "Logout");
     g_signal_connect(lo, "clicked", G_CALLBACK(on_logout), NULL);
@@ -1537,9 +1535,8 @@ static void do_enqueue(const char *pid, const char *name, int is_emergency) {
     if (qn->isEmergency) {
         QueueNode *cq = walkInQueue.front, *pv = NULL;
         while (cq && !cq->isEmergency) { pv = cq; cq = cq->next; }
-        if (!pv) { qn->next = walkInQueue.front; walkInQueue.front = qn; }
+        if (!pv || !cq) { qn->next = walkInQueue.front; walkInQueue.front = qn; if (!qn->next) walkInQueue.rear = qn; }
         else { qn->next = cq; pv->next = qn; }
-        if (!qn->next) walkInQueue.rear = qn;
     } else {
         if (!walkInQueue.rear) walkInQueue.front = walkInQueue.rear = qn;
         else { walkInQueue.rear->next = qn; walkInQueue.rear = qn; }
@@ -2101,33 +2098,87 @@ static void on_view_schedule(GtkButton *btn, gpointer data) {
     gtk_widget_destroy(d);
 }
 
+static void add_user_dialog(void) {
+    GtkWidget *d = gtk_dialog_new_with_buttons("Add User",
+        GTK_WINDOW(main_window), GTK_DIALOG_MODAL, "Add", GTK_RESPONSE_ACCEPT, "Cancel", GTK_RESPONSE_REJECT, NULL);
+    GtkWidget *c = gtk_dialog_get_content_area(GTK_DIALOG(d));
+    gtk_container_set_border_width(GTK_CONTAINER(c), 16);
+
+    GtkWidget *un_e = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(un_e), "Username");
+    GtkWidget *pw_e = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(pw_e), "Password");
+    gtk_entry_set_visibility(GTK_ENTRY(pw_e), FALSE);
+    GtkWidget *fn_e = gtk_entry_new(); gtk_entry_set_placeholder_text(GTK_ENTRY(fn_e), "Full Name");
+
+    gtk_box_pack_start(GTK_BOX(c), form_row("Username", un_e), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(c), form_row("Password", pw_e), FALSE, FALSE, 0);
+    gtk_box_pack_start(GTK_BOX(c), form_row("Full Name", fn_e), FALSE, FALSE, 0);
+
+    gtk_widget_show_all(d);
+    if (gtk_dialog_run(GTK_DIALOG(d)) == GTK_RESPONSE_ACCEPT) {
+        const char *un = gtk_entry_get_text(GTK_ENTRY(un_e));
+        const char *pw = gtk_entry_get_text(GTK_ENTRY(pw_e));
+        const char *fn = gtk_entry_get_text(GTK_ENTRY(fn_e));
+
+        if (strlen(un) == 0 || strlen(pw) == 0) {
+            show_notification("Username and password are required.", "error");
+        } else if (findUser(un)) {
+            show_notification("Username already exists!", "error");
+        } else {
+            User *u = (User*)malloc(sizeof(User));
+            if (u) {
+                strcpy(u->username, un);
+                char hash[65]; sha256_string(pw, hash);
+                strcpy(u->password, hash);
+                strcpy(u->fullName, fn[0] ? fn : un);
+                strcpy(u->lastLogin, "Never");
+                u->isActive = 1;
+                u->next = userList;
+                userList = u;
+                saveUsers();
+                appendAuditLog("ADD_USER", u->username, "SUCCESS");
+                show_notification("User added successfully!", "success");
+            }
+        }
+    }
+    gtk_widget_destroy(d);
+}
+
 void on_manage_users(GtkButton *btn, gpointer data) {
     (void)btn; (void)data;
-    GtkWidget *d = gtk_dialog_new_with_buttons("User Management",
-        GTK_WINDOW(main_window), GTK_DIALOG_MODAL, "Add", GTK_RESPONSE_ACCEPT, "Close", GTK_RESPONSE_CLOSE, NULL);
-    gtk_window_set_default_size(GTK_WINDOW(d), 500, 400);
+    while (1) {
+        GtkWidget *d = gtk_dialog_new_with_buttons("User Management",
+            GTK_WINDOW(main_window), GTK_DIALOG_MODAL, "Add", GTK_RESPONSE_ACCEPT, "Close", GTK_RESPONSE_CLOSE, NULL);
+        gtk_window_set_default_size(GTK_WINDOW(d), 500, 400);
 
-    GtkWidget *c = gtk_dialog_get_content_area(GTK_DIALOG(d));
-    GtkListStore *s = gtk_list_store_new(4, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
-    User *cur = userList;
-    while (cur) {
-        GtkTreeIter it; gtk_list_store_append(s, &it);
-        gtk_list_store_set(s, &it, 0, cur->username, 1, cur->role, 2, cur->fullName, 3, cur->isActive ? "Active" : "Inactive", -1);
-        cur = cur->next;
+        GtkWidget *c = gtk_dialog_get_content_area(GTK_DIALOG(d));
+        GtkListStore *s = gtk_list_store_new(3, G_TYPE_STRING, G_TYPE_STRING, G_TYPE_STRING);
+        User *cur = userList;
+        while (cur) {
+            GtkTreeIter it; gtk_list_store_append(s, &it);
+            gtk_list_store_set(s, &it, 0, cur->username, 1, cur->fullName, 2, cur->isActive ? "Active" : "Inactive", -1);
+            cur = cur->next;
+        }
+        GtkWidget *tv = gtk_tree_view_new_with_model(GTK_TREE_MODEL(s));
+        gtk_tree_view_set_grid_lines(GTK_TREE_VIEW(tv), GTK_TREE_VIEW_GRID_LINES_HORIZONTAL);
+        const char *ucols[] = {"Username", "Full Name", "Status"};
+        for (int i = 0; i < 3; i++) {
+            GtkCellRenderer *r = gtk_cell_renderer_text_new();
+            gtk_tree_view_append_column(GTK_TREE_VIEW(tv), gtk_tree_view_column_new_with_attributes(ucols[i], r, "text", i, NULL));
+        }
+        GtkWidget *sc = gtk_scrolled_window_new(NULL, NULL);
+        gtk_container_add(GTK_CONTAINER(sc), tv);
+        gtk_box_pack_start(GTK_BOX(c), sc, TRUE, TRUE, 0);
+        gtk_widget_show_all(d);
+
+        int res = gtk_dialog_run(GTK_DIALOG(d));
+        gtk_widget_destroy(d);
+
+        if (res == GTK_RESPONSE_ACCEPT) {
+            add_user_dialog();
+        } else {
+            break;
+        }
     }
-    GtkWidget *tv = gtk_tree_view_new_with_model(GTK_TREE_MODEL(s));
-    gtk_tree_view_set_grid_lines(GTK_TREE_VIEW(tv), GTK_TREE_VIEW_GRID_LINES_HORIZONTAL);
-    const char *ucols[] = {"Username", "Role", "Full Name", "Status"};
-    for (int i = 0; i < 4; i++) {
-        GtkCellRenderer *r = gtk_cell_renderer_text_new();
-        gtk_tree_view_append_column(GTK_TREE_VIEW(tv), gtk_tree_view_column_new_with_attributes(ucols[i], r, "text", i, NULL));
-    }
-    GtkWidget *sc = gtk_scrolled_window_new(NULL, NULL);
-    gtk_container_add(GTK_CONTAINER(sc), tv);
-    gtk_box_pack_start(GTK_BOX(c), sc, TRUE, TRUE, 0);
-    gtk_widget_show_all(d);
-    gtk_dialog_run(GTK_DIALOG(d));
-    gtk_widget_destroy(d);
 }
 
 void on_backup(GtkButton *btn, gpointer data) {

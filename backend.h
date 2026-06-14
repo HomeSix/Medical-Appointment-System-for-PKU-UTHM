@@ -31,7 +31,6 @@
 #define MAX_REMARKS 200
 #define MAX_USERNAME 30
 #define MAX_PASSWORD 65
-#define MAX_ROLE 15
 #define MAX_FULLNAME 50
 #define MAX_TIMESTAMP 25
 #define MAX_DAYS 50
@@ -60,7 +59,7 @@ typedef struct Appointment {
 
 typedef struct User {
     char username[MAX_USERNAME]; char password[MAX_PASSWORD];
-    char role[MAX_ROLE]; char fullName[MAX_FULLNAME];
+    char fullName[MAX_FULLNAME];
     char lastLogin[MAX_TIMESTAMP]; int isActive;
     struct User* next;
 } User;
@@ -189,7 +188,6 @@ void logout();
 void changePassword();
 User* findUser(const char* username);
 int authenticate(const char* username, const char* password);
-int hasRole(const char* roles);
 
 void sha256_string(const char *str, char output[65]);
 void generateMC();

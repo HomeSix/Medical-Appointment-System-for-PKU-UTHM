@@ -57,7 +57,6 @@
 #define MAX_REMARKS 200
 #define MAX_USERNAME 30
 #define MAX_PASSWORD 65
-#define MAX_ROLE 15
 #define MAX_FULLNAME 50
 #define MAX_TIMESTAMP 25
 #define MAX_DAYS 50
@@ -177,7 +176,7 @@ typedef struct Appointment {
 
 typedef struct User {
     char username[MAX_USERNAME]; char password[MAX_PASSWORD];
-    char role[MAX_ROLE]; char fullName[MAX_FULLNAME];
+    char fullName[MAX_FULLNAME];
     char lastLogin[MAX_TIMESTAMP]; int isActive;
     struct User* next;
 } User;
@@ -1194,9 +1193,8 @@ void enqueueWalkIn() {
         QueueNode* cur = walkInQueue.front;
         QueueNode* prev = NULL;
         while (cur && !cur->isEmergency) { prev = cur; cur = cur->next; }
-        if (!prev) { q->next = walkInQueue.front; walkInQueue.front = q; }
+        if (!prev || !cur) { q->next = walkInQueue.front; walkInQueue.front = q; if (!q->next) walkInQueue.rear = q; }
         else { q->next = cur; prev->next = q; }
-        if (!q->next) walkInQueue.rear = q;
         printWarning("Emergency case placed at front of queue!");
     } else {
         if (!walkInQueue.rear) { walkInQueue.front = walkInQueue.rear = q; }
@@ -1339,9 +1337,9 @@ void loadUsers() {
         if (strlen(line)==0) continue;
         User* u = (User*)malloc(sizeof(User));
         if (!u) continue;
-        if (sscanf(line, "%[^|]|%[^|]|%[^|]|%[^|]|%[^|]|%d",
-                   u->username, u->password, u->role, u->fullName,
-                   u->lastLogin, &u->isActive) == 6) {
+        if (sscanf(line, "%[^|]|%[^|]|%[^|]|%[^|]|%d",
+                   u->username, u->password, u->fullName,
+                   u->lastLogin, &u->isActive) >= 5) {
             u->next = userList;
             userList = u;
         } else free(u);
@@ -1468,8 +1466,8 @@ void saveUsers() {
     if (!f) return;
     User* cur = userList;
     while (cur) {
-        fprintf(f, "%s|%s|%s|%s|%s|%d\n",
-                cur->username, cur->password, cur->role, cur->fullName,
+        fprintf(f, "%s|%s|%s|%s|%d\n",
+                cur->username, cur->password, cur->fullName,
                 cur->lastLogin, cur->isActive);
         cur = cur->next;
     }
@@ -1830,12 +1828,12 @@ void manageUsers() {
         if (choice == 5) break;
 
         if (choice == 1) {
-            printf("\n%s%-15s %-25s %-15s %-20s %-8s%s\n", BOLD,
-                   "Username", "Full Name", "Role", "Last Login", "Active", RESET);
+            printf("\n%s%-15s %-25s %-20s %-8s%s\n", BOLD,
+                   "Username", "Full Name", "Last Login", "Active", RESET);
             User* cur = userList;
             while (cur) {
-                printf("%-15s %-25s %-15s %-20s %-8s\n",
-                       cur->username, cur->fullName, cur->role,
+                printf("%-15s %-25s %-20s %-8s\n",
+                       cur->username, cur->fullName,
                        cur->lastLogin, cur->isActive ? "Yes" : "No");
                 cur = cur->next;
             }
@@ -1850,7 +1848,6 @@ void manageUsers() {
             char pass[MAX_PASSWORD];
             printf("Password: "); inputPassword(pass, MAX_PASSWORD);
             sha256_string(pass, u->password);
-            strcpy(u->role, "admin");
             inputString(u->fullName, MAX_FULLNAME, "Full Name: ");
             strcpy(u->lastLogin, "Never");
             u->isActive = 1;
@@ -1885,18 +1882,6 @@ int checkSession() {
     }
     lastActivity = time(NULL);
     return 1;
-}
-
-int hasRole(const char* roles) {
-    if (!currentUser) return 0;
-    char buf[100]; strcpy(buf, roles);
-    char* tok = strtok(buf, ",");
-    while (tok) {
-        while (*tok==' ') tok++;
-        if (strcmp(currentUser->role, tok)==0) return 1;
-        tok = strtok(NULL, ",");
-    }
-    return 0;
 }
 
 void patientMenu() {

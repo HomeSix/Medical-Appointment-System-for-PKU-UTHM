@@ -1,5 +1,5 @@
-General|Dr. Rajesh Kumar|Tue,Thu,Sat|08:00 AM|05:00 PM|20|12
-Physiotherapy|Dr. Lim Mei Ling|Mon,Wed,Fri|08:00 AM|02:00 PM|12|8
-Mental Health|Dr. Ahmad Faiz|Mon,Tue,Wed,Thu,Fri|09:00 AM|03:00 PM|10|5
-Dental|Dr. Sarah Lee|Tue,Thu|09:00 AM|04:00 PM|15|10
 General|Dr. Mohd Ali|Mon,Wed,Fri|08:00 AM|05:00 PM|20|15
+Dental|Dr. Sarah Lee|Tue,Thu|09:00 AM|04:00 PM|15|10
+Mental Health|Dr. Ahmad Faiz|Mon,Tue,Wed,Thu,Fri|09:00 AM|03:00 PM|10|5
+Physiotherapy|Dr. Lim Mei Ling|Mon,Wed,Fri|08:00 AM|02:00 PM|12|8
+General|Dr. Rajesh Kumar|Tue,Thu,Sat|08:00 AM|05:00 PM|20|12
